@@ -1,13 +1,14 @@
 import { getSupabaseServer } from "@/lib/supabaseClient";
 import type {
-	MagiAgent,
-	MagiConsensus,
-	MagiMessage,
-	MagiMessageKind,
-	MagiSession,
-	MagiSessionStatus,
-	MagiVote,
+        MagiAgent,
+        MagiConsensus,
+        MagiMessage,
+        MagiMessageKind,
+        MagiSession,
+        MagiSessionStatus,
+        MagiVote,
 } from "@/lib/magiTypes";
+import { DEFAULT_MODELS, canonicalModelFor } from "@/lib/magiModels";
 
 const DEFAULT_AGENTS: Array<{
         slug: MagiAgent["slug"];
@@ -16,9 +17,9 @@ const DEFAULT_AGENTS: Array<{
         model: string | null;
         color: string | null;
 }> = [
-        { slug: "casper", name: "CASPER", provider: "openai", model: "gpt-4o-mini", color: "#38bdf8" },
-        { slug: "balthasar", name: "BALTHASAR", provider: "anthropic", model: "claude-3-5-sonnet", color: "#f472b6" },
-        { slug: "melchior", name: "MELCHIOR", provider: "grok", model: "grok-2-mini", color: "#facc15" },
+        { slug: "casper", name: "CASPER", provider: "openai", model: DEFAULT_MODELS.openai, color: "#38bdf8" },
+        { slug: "balthasar", name: "BALTHASAR", provider: "anthropic", model: DEFAULT_MODELS.anthropic, color: "#f472b6" },
+        { slug: "melchior", name: "MELCHIOR", provider: "grok", model: DEFAULT_MODELS.grok, color: "#facc15" },
 ];
 
 export async function listAgents(): Promise<MagiAgent[]> {
@@ -37,9 +38,15 @@ export async function listAgents(): Promise<MagiAgent[]> {
                         .select("*")
                         .order("slug", { ascending: true });
                 if (refreshError) throw refreshError;
-                return refreshed as unknown as MagiAgent[];
+                return (refreshed || []).map((agent: any) => ({
+                        ...agent,
+                        model: canonicalModelFor(agent.provider, agent.model),
+                })) as unknown as MagiAgent[];
         }
-        return (data || []) as unknown as MagiAgent[];
+        return (data || []).map((agent: any) => ({
+                ...agent,
+                model: canonicalModelFor(agent.provider, agent.model),
+        })) as unknown as MagiAgent[];
 }
 
 export async function createSession(userId: string, question: string): Promise<MagiSession> {
