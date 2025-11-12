@@ -45,7 +45,7 @@ export default function MagiConsensusControl() {
 		return () => clearInterval(i);
 	}, []);
 
-        const keys = useMemo(() => {
+        const getKeys = useCallback(() => {
                 return {
                         openai: safeLoad("magi_provider_openai_api_key") || undefined,
                         anthropic: safeLoad("magi_provider_anthropic_api_key") || undefined,
@@ -126,6 +126,7 @@ export default function MagiConsensusControl() {
 	}
 
         const runStep = useCallback(async (sessionId: string, s: "propose" | "critique" | "vote" | "consensus") => {
+                const keys = getKeys();
                 const res = await fetch(`/api/magi/session/${sessionId}/step`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -168,7 +169,7 @@ export default function MagiConsensusControl() {
                 // And a brief delayed refresh to avoid any replication lag
                 setTimeout(() => fetchFull(sessionId), 150);
                 return data;
-        }, [fetchFull, keys, formatDiagnosticSummary]);
+        }, [fetchFull, formatDiagnosticSummary, getKeys]);
 
         const onRun = useCallback(async () => {
                 setError(null);
@@ -205,11 +206,12 @@ export default function MagiConsensusControl() {
 				setStep("error");
 				return;
 			}
-			const createRes = await fetch("/api/magi/session", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ question: q, userId, keys }),
-			});
+                        const keys = getKeys();
+                        const createRes = await fetch("/api/magi/session", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ question: q, userId, keys }),
+                        });
 			const created = await createRes.json();
 			if (!created.ok) {
 				throw new Error(created.error || "Failed to create session");
@@ -262,7 +264,7 @@ export default function MagiConsensusControl() {
 			setError(e?.message || "Unexpected error");
 			setStep("error");
 		}
-	}, [question, verifiedAll, fetchFull, runStep]);
+        }, [question, verifiedAll, fetchFull, runStep, getKeys]);
 
 	const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
 	const critiques = displayCritiques.length > 0 ? displayCritiques : messages.filter((m) => m.role === "agent_critique");
