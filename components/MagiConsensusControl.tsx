@@ -12,6 +12,24 @@ import type {
         MagiVote,
 } from "@/lib/magiTypes";
 
+function normalizeVoteScores(raw: MagiVote[] | null | undefined): MagiVote[] {
+        if (!Array.isArray(raw)) return [];
+        return raw.map((vote) => {
+                const rawScore = (vote as unknown as { score: number | string | null | undefined }).score;
+                const parsedScore =
+                        typeof rawScore === "number"
+                                ? rawScore
+                                : typeof rawScore === "string"
+                                        ? Number(rawScore)
+                                        : null;
+                const safeScore =
+                        typeof parsedScore === "number" && Number.isFinite(parsedScore) ? parsedScore : 0;
+                return safeScore === (vote as unknown as { score: number }).score
+                        ? vote
+                        : { ...vote, score: safeScore };
+        });
+}
+
 type Step = "idle" | "creating" | "proposing" | "critiquing" | "voting" | "finalizing" | "done" | "error";
 
 export default function MagiConsensusControl() {
@@ -64,7 +82,13 @@ export default function MagiConsensusControl() {
                                                 .join(", ") || "—";
                                         const votes =
                                                 a.votesCast
-                                                        .map((v) => `#${v.targetMessageId}:${v.score}${v.fallback ? "*" : ""}`)
+                                                        .map((v) => {
+                                                                const score =
+                                                                        typeof v.score === "number"
+                                                                                ? v.score
+                                                                                : Number(v.score) || 0;
+                                                                return `#${v.targetMessageId}:${score}${v.fallback ? "*" : ""}`;
+                                                        })
                                                         .join(", ") || "—";
                                         return `${a.name} P:${proposals} C:${critiques} V:${votes}`;
                                 })
@@ -86,10 +110,10 @@ export default function MagiConsensusControl() {
                 const data = await res.json();
                 if (!data.ok) throw new Error(data.error || "Failed to fetch session");
                 setSession(data.session);
-		setMessages(data.messages || []);
-		setConsensus(data.consensus || null);
-		setAgents(data.agents || []);
-		setVotes(data.votes || []);
+                setMessages(data.messages || []);
+                setConsensus(data.consensus || null);
+                setAgents(data.agents || []);
+                setVotes(normalizeVoteScores(data.votes as MagiVote[] | undefined));
 		// Update display buffers from fetched data if not already present
 		const fetchedProposals: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_proposal");
 		const fetchedCritiques: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_critique");
@@ -152,7 +176,7 @@ export default function MagiConsensusControl() {
 			}
 			return next;
                 });
-                if (Array.isArray(data.votes)) setVotes(data.votes as MagiVote[]);
+                if (Array.isArray(data.votes)) setVotes(normalizeVoteScores(data.votes as MagiVote[]));
                 if (data.diagnostics) {
                         const diagArray = Array.isArray(data.diagnostics)
                                 ? (data.diagnostics as MagiStepDiagnostics[])
@@ -288,12 +312,12 @@ export default function MagiConsensusControl() {
 	}, [agents]);
 	const votesByProposal = useMemo(() => {
 		const m: Record<number, MagiVote[]> = {};
-		for (const v of votes) {
-			if (!m[v.target_message_id]) m[v.target_message_id] = [];
-			m[v.target_message_id].push(v);
-		}
-		return m;
-	}, [votes]);
+                for (const v of votes) {
+                        if (!m[v.target_message_id]) m[v.target_message_id] = [];
+                        m[v.target_message_id].push(v);
+                }
+                return m;
+        }, [votes]);
 	const consensusMessageId = useMemo(() => displayFinal?.id ?? messages.find((m) => m.role === "consensus")?.id ?? null, [displayFinal, messages]);
 	const proposalByAgent: Record<string, MagiMessage | undefined> = useMemo(() => {
 		const map: Record<string, MagiMessage | undefined> = {};
@@ -487,12 +511,18 @@ export default function MagiConsensusControl() {
                                                                                                         <span className="text-white/60">Votes:</span>{" "}
                                                                                                         {agent.votesCast.length > 0 ? (
                                                                                                                 <span className="inline-flex flex-wrap gap-1 align-top">
-                                                                                                                        {agent.votesCast.map((v) => (
-                                                                                                                                <span key={v.id} className="px-1 py-0.5 rounded bg-white/10 border border-white/10" title={v.rationale || undefined}>
-                                                                                                                                        #{v.targetMessageId}:{v.score}
-                                                                                                                                        {v.fallback ? "*" : ""}
-                                                                                                                                </span>
-                                                                                                                        ))}
+                                                                                                                        {agent.votesCast.map((v) => {
+                                                                                                                                const score =
+                                                                                                                                        typeof v.score === "number"
+                                                                                                                                                ? v.score
+                                                                                                                                                : Number(v.score) || 0;
+                                                                                                                                return (
+                                                                                                                                        <span key={v.id} className="px-1 py-0.5 rounded bg-white/10 border border-white/10" title={v.rationale || undefined}>
+                                                                                                                                                #{v.targetMessageId}:{score}
+                                                                                                                                                {v.fallback ? "*" : ""}
+                                                                                                                                        </span>
+                                                                                                                                );
+                                                                                                                        })}
                                                                                                                 </span>
                                                                                                         ) : (
                                                                                                                 "—"
@@ -571,9 +601,15 @@ export default function MagiConsensusControl() {
 						<h3 className="title-text text-sm font-bold mb-2">Voting</h3>
 						<div className="space-y-3">
 							{proposals.length === 0 && <div className="ui-text text-sm text-white/50">Awaiting votes…</div>}
-							{proposals.map((p) => {
-								const pv = votesByProposal[p.id] || [];
-								const total = pv.reduce((s, v) => s + (v.score || 0), 0);
+                                                        {proposals.map((p) => {
+                                                                const pv = votesByProposal[p.id] || [];
+                                                                const total = pv.reduce((s, v) => {
+                                                                        const score =
+                                                                                typeof v.score === "number"
+                                                                                        ? v.score
+                                                                                        : Number(v.score) || 0;
+                                                                        return s + score;
+                                                                }, 0);
 								return (
 									<div key={p.id} className={`ui-text text-sm text-white/80 bg-white/5 border ${consensusMessageId === p.id ? "border-magiGreen/50" : "border-white/10"} rounded p-2`}>
 										<div className="flex items-center justify-between">
@@ -581,15 +617,21 @@ export default function MagiConsensusControl() {
 											<div className="text-white/60">Total: {total}</div>
 										</div>
 										<div className="mt-1 space-y-1">
-											{agents.map((a) => {
-												const v = pv.find((x) => x.agent_id === a.id);
-												return (
-													<div key={`${p.id}-${a.id}`} className="flex items-start justify-between gap-2">
-														<span className="text-white/70">{a.name}</span>
-														<span className="text-white/80">{v ? v.score : "—"}</span>
-													</div>
-												);
-											})}
+                                                                                        {agents.map((a) => {
+                                                                                                const v = pv.find((x) => x.agent_id === a.id);
+                                                                                                const displayScore =
+                                                                                                        v && typeof v.score === "number"
+                                                                                                                ? v.score
+                                                                                                                : v && typeof v.score === "string"
+                                                                                                                        ? Number(v.score) || 0
+                                                                                                                        : null;
+                                                                                                return (
+                                                                                                        <div key={`${p.id}-${a.id}`} className="flex items-start justify-between gap-2">
+                                                                                                                <span className="text-white/70">{a.name}</span>
+                                                                                                                <span className="text-white/80">{displayScore !== null ? displayScore : "—"}</span>
+                                                                                                        </div>
+                                                                                                );
+                                                                                        })}
 										</div>
 									</div>
 								);
