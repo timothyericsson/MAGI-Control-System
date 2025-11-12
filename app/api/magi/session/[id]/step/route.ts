@@ -19,14 +19,21 @@ import type {
         StepRequestBody,
 } from "@/lib/magiTypes";
 
-type ProviderKeyMap = { openai?: string; anthropic?: string; grok?: string };
+type ProviderKeyMap = { openai?: string; anthropic?: string; grok?: string; xai?: string };
+
+type AgentChatResult = {
+        content: string;
+        providerUsed: "openai" | "anthropic" | "grok";
+        fallbackProvider?: "openai";
+        fallbackReason?: string;
+};
 
 function keyForAgent(agent: MagiAgent, keys?: ProviderKeyMap): string | undefined {
-	if (!keys) return undefined;
-	if (agent.provider === "openai") return keys.openai;
-	if (agent.provider === "anthropic") return keys.anthropic;
-	if (agent.provider === "grok") return keys.grok;
-	return undefined;
+        if (!keys) return undefined;
+        if (agent.provider === "openai") return keys.openai;
+        if (agent.provider === "anthropic") return keys.anthropic;
+        if (agent.provider === "grok") return keys.grok ?? keys.xai;
+        return undefined;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -179,86 +186,163 @@ function buildDiagnostics(params: {
         return diagnostics;
 }
 
-async function callOpenAIChat(apiKey: string, model: string, messages: { role: string; content: string }[]): Promise<string> {
+async function callOpenAIChat(
+        apiKey: string,
+        model: string,
+        messages: { role: string; content: string }[],
+        userLabel?: string
+): Promise<string> {
         const res = await fetch("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
                 headers: {
-			"Authorization": `Bearer ${apiKey}`,
+                        "Authorization": `Bearer ${apiKey}`,
+                        "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                        model: model || "gpt-4o-mini",
+                        messages,
+                        temperature: 0.3,
+                        ...(userLabel ? { user: userLabel } : {}),
+                }),
+        });
+        if (!res.ok) throw new Error(`openai error ${res.status}`);
+        const data = await res.json();
+        const txt = data?.choices?.[0]?.message?.content ?? "";
+        return String(txt).trim();
+}
+
+async function callXAIChat(
+        apiKey: string,
+        model: string,
+        messages: { role: string; content: string }[],
+        userLabel?: string
+): Promise<string> {
+        // xAI is OpenAI-compatible for chat completions
+        const res = await fetch("https://api.x.ai/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                        "Authorization": `Bearer ${apiKey}`,
 			"Content-Type": "application/json",
 		},
-		body: JSON.stringify({
-			model: model || "gpt-4o-mini",
-			messages,
-			temperature: 0.3,
-		}),
-	});
-	if (!res.ok) throw new Error(`openai error ${res.status}`);
-	const data = await res.json();
-	const txt = data?.choices?.[0]?.message?.content ?? "";
+                body: JSON.stringify({
+                        model: model || "grok-2-mini",
+                        messages,
+                        temperature: 0.3,
+                        ...(userLabel ? { user: userLabel } : {}),
+                }),
+        });
+        if (!res.ok) throw new Error(`xai error ${res.status}`);
+        const data = await res.json();
+        const txt = data?.choices?.[0]?.message?.content ?? "";
+        return String(txt).trim();
+}
+
+async function callAnthropic(
+        apiKey: string,
+        model: string,
+        messages: { role: "user" | "assistant" | "system"; content: string }[],
+        userLabel?: string
+): Promise<string> {
+        // Convert to Anthropic messages API format
+        const sys = messages.find((m) => m.role === "system")?.content;
+        const userTurns = messages.filter((m) => m.role !== "system").map((m) => ({
+                role: m.role === "assistant" ? "assistant" : "user",
+                content: [{ type: "text", text: m.content }],
+        }));
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                        "x-api-key": apiKey,
+                        "anthropic-version": "2023-06-01",
+                        "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                        model: model || "claude-3-5-sonnet",
+                        max_tokens: 400,
+                        system: sys,
+                        messages: userTurns,
+                        temperature: 0.3,
+                        ...(userLabel ? { metadata: { user_id: userLabel } } : {}),
+                }),
+        });
+        if (!res.ok) throw new Error(`anthropic error ${res.status}`);
+        const data = await res.json();
+        const txt = data?.content?.[0]?.text ?? "";
 	return String(txt).trim();
 }
 
-async function callXAIChat(apiKey: string, model: string, messages: { role: string; content: string }[]): Promise<string> {
-	// xAI is OpenAI-compatible for chat completions
-	const res = await fetch("https://api.x.ai/v1/chat/completions", {
-		method: "POST",
-		headers: {
-			"Authorization": `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			model: model || "grok-2-mini",
-			messages,
-			temperature: 0.3,
-		}),
-	});
-	if (!res.ok) throw new Error(`xai error ${res.status}`);
-	const data = await res.json();
-	const txt = data?.choices?.[0]?.message?.content ?? "";
-	return String(txt).trim();
+function normalizeMessagesForFallback(agent: MagiAgent, messages: { role: "system" | "user" | "assistant"; content: string }[]) {
+        const systemMsg = messages.find((m) => m.role === "system")?.content ?? "";
+        const remaining = messages.filter((m) => m.role !== "system");
+        const persona = `You are ${agent.name}, a MAGI core originally running on provider ${agent.provider.toUpperCase()}. Maintain ${agent.name}'s distinctive analytical voice.`;
+        const combinedSystem = [persona, systemMsg].filter(Boolean).join("\n\n");
+        return [
+                { role: "system", content: combinedSystem },
+                ...remaining,
+        ] as { role: "system" | "user" | "assistant"; content: string }[];
 }
 
-async function callAnthropic(apiKey: string, model: string, messages: { role: "user" | "assistant" | "system"; content: string }[]): Promise<string> {
-	// Convert to Anthropic messages API format
-	const sys = messages.find((m) => m.role === "system")?.content;
-	const userTurns = messages.filter((m) => m.role !== "system").map((m) => ({
-		role: m.role === "assistant" ? "assistant" : "user",
-		content: [{ type: "text", text: m.content }],
-	}));
-	const res = await fetch("https://api.anthropic.com/v1/messages", {
-		method: "POST",
-		headers: {
-			"x-api-key": apiKey,
-			"anthropic-version": "2023-06-01",
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			model: model || "claude-3-5-sonnet",
-			max_tokens: 400,
-			system: sys,
-			messages: userTurns,
-			temperature: 0.3,
-		}),
-	});
-	if (!res.ok) throw new Error(`anthropic error ${res.status}`);
-	const data = await res.json();
-	const txt = data?.content?.[0]?.text ?? "";
-	return String(txt).trim();
-}
+async function agentChat(
+        agent: MagiAgent,
+        keys: ProviderKeyMap | undefined,
+        messages: { role: "system" | "user" | "assistant"; content: string }[]
+): Promise<AgentChatResult> {
+        const model =
+                agent.model ||
+                (agent.provider === "openai"
+                        ? "gpt-4o-mini"
+                        : agent.provider === "anthropic"
+                        ? "claude-3-5-sonnet"
+                        : "grok-2-mini");
 
-async function agentChat(agent: MagiAgent, keys: ProviderKeyMap | undefined, messages: { role: "system" | "user" | "assistant"; content: string }[]): Promise<string> {
-	const key = keyForAgent(agent, keys);
-	const model = agent.model || (agent.provider === "openai" ? "gpt-4o-mini" : agent.provider === "anthropic" ? "claude-3-5-sonnet" : "grok-2-mini");
-	if (!key) throw new Error(`Missing key for ${agent.provider}`);
-	if (agent.provider === "openai") {
-		return await withTimeout(callOpenAIChat(key, model, messages), 20000, "openai");
-	}
-	if (agent.provider === "anthropic") {
-		// Anthropics roles are different; function adapts
-		return await withTimeout(callAnthropic(key, model, messages as any), 20000, "anthropic");
-	}
-	// grok/xai
-	return await withTimeout(callXAIChat(key, model, messages), 20000, "xai");
+        async function invokePrimary(provider: "openai" | "anthropic" | "grok", apiKey: string, label: string) {
+                if (provider === "openai") {
+                        const txt = await withTimeout(callOpenAIChat(apiKey, model, messages, agent.slug), 20000, label);
+                        return { content: txt, providerUsed: "openai" as const };
+                }
+                if (provider === "anthropic") {
+                        const txt = await withTimeout(
+                                callAnthropic(apiKey, model, messages as any, agent.slug),
+                                20000,
+                                label
+                        );
+                        return { content: txt, providerUsed: "anthropic" as const };
+                }
+                const txt = await withTimeout(callXAIChat(apiKey, model, messages, agent.slug), 20000, label);
+                return { content: txt, providerUsed: "grok" as const };
+        }
+
+        const primaryKey = keyForAgent(agent, keys);
+        let primaryError: Error | null = null;
+
+        if (primaryKey) {
+                try {
+                        return await invokePrimary(agent.provider, primaryKey, agent.provider);
+                } catch (err: any) {
+                        primaryError = err instanceof Error ? err : new Error(String(err));
+                }
+        } else {
+                primaryError = new Error(`Missing key for ${agent.provider}`);
+        }
+
+        // If primary provider failed but we have an OpenAI key, fall back to OpenAI to keep the agent producing content.
+        const openaiKey = keys?.openai;
+        if (openaiKey) {
+                const fallbackMessages = normalizeMessagesForFallback(agent, messages);
+                const txt = await withTimeout(
+                        callOpenAIChat(openaiKey, "gpt-4o-mini", fallbackMessages, agent.slug),
+                        20000,
+                        "openai-fallback"
+                );
+                return {
+                        content: txt,
+                        providerUsed: "openai",
+                        fallbackProvider: "openai",
+                        fallbackReason: primaryError ? primaryError.message : undefined,
+                };
+        }
+
+        throw primaryError ?? new Error(`Unable to reach ${agent.name}`);
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -285,11 +369,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                 agents.map(async (a) => {
                                         let content = "";
                                         let fallbackUsed = false;
+                                        let chatResult: AgentChatResult | null = null;
                                         try {
-                                                content = await agentChat(a, keys, [
+                                                chatResult = await agentChat(a, keys, [
                                                         { role: "system", content: `You are ${a.name}. Provide a concise, helpful answer. Keep it under 120 words.` },
                                                         { role: "user", content: userQuestion },
                                                 ]);
+                                                content = chatResult.content;
+                                                if (chatResult.fallbackReason) {
+                                                        stageEvents.push(
+                                                                `[${a.name}] proposal rerouted via ${chatResult.providerUsed} (fallback): ${chatResult.fallbackReason}`
+                                                        );
+                                                }
                                                 if (!content) {
                                                         fallbackUsed = true;
                                                         stageEvents.push(`[${a.name}] proposal empty response; using fallback text.`);
@@ -300,15 +391,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                 stageEvents.push(`[${a.name}] proposal fallback: ${err?.message || "unknown error"}`);
                                                 content = `[${a.name}] Proposal for: ${userQuestion}`;
                                         }
+                                        const actualProvider = chatResult?.providerUsed ?? a.provider;
+                                        const meta: Record<string, unknown> = {
+                                                provider: a.provider,
+                                                stage: "proposal",
+                                                fallback: fallbackUsed,
+                                                actualProvider,
+                                        };
+                                        if (chatResult?.fallbackProvider) meta.fallbackProvider = chatResult.fallbackProvider;
+                                        if (chatResult?.fallbackReason) meta.fallbackReason = chatResult.fallbackReason;
                                         const message = await addMessage({
                                                 sessionId,
                                                 role: "agent_proposal",
                                                 agentId: a.id,
                                                 content,
                                                 model: a.model ?? null,
-                                                meta: { provider: a.provider, stage: "proposal", fallback: fallbackUsed },
+                                                meta,
                                         });
-                                        stageEvents.push(`[${a.name}] proposal stored as #${message.id}${fallbackUsed ? " (fallback)" : ""}`);
+                                        stageEvents.push(
+                                                `[${a.name}] proposal stored as #${message.id} via ${actualProvider}${fallbackUsed ? " (fallback)" : ""}`
+                                        );
                                 })
                         );
                         let refreshedState = await getSessionFull(sessionId);
@@ -360,12 +462,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                 .map(async (p) => {
                                                         let critique = "";
                                                         let fallbackUsed = false;
+                                                        let chatResult: AgentChatResult | null = null;
                                                         const textForCritique = proposals.find((x) => x.id === p.id)?.content ?? "";
                                                         try {
-                                                                critique = await agentChat(critic, keys, [
+                                                                chatResult = await agentChat(critic, keys, [
                                                                         { role: "system", content: `You are ${critic.name}. Provide a brief, constructive critique (1-2 sentences).` },
                                                                         { role: "user", content: `Critique this proposal:\n\n${textForCritique}` },
                                                                 ]);
+                                                                critique = chatResult.content;
+                                                                if (chatResult.fallbackReason) {
+                                                                        stageEvents.push(
+                                                                                `[${critic.name}] critique rerouted via ${chatResult.providerUsed} (fallback): ${chatResult.fallbackReason}`
+                                                                        );
+                                                                }
                                                                 if (!critique) {
                                                                         fallbackUsed = true;
                                                                         stageEvents.push(`[${critic.name}] critique empty for proposal #${p.id}; using fallback text.`);
@@ -376,16 +485,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                                 stageEvents.push(`[${critic.name}] critique fallback for proposal #${p.id}: ${err?.message || "unknown error"}`);
                                                                 critique = `[${critic.name}] critique of message ${p.id}: consider evidence and clarify assumptions.`;
                                                         }
+                                                        const actualProvider = chatResult?.providerUsed ?? critic.provider;
+                                                        const meta: Record<string, unknown> = {
+                                                                targetMessageId: p.id,
+                                                                stage: "critique",
+                                                                fallback: fallbackUsed,
+                                                                actualProvider,
+                                                        };
+                                                        if (chatResult?.fallbackProvider) meta.fallbackProvider = chatResult.fallbackProvider;
+                                                        if (chatResult?.fallbackReason) meta.fallbackReason = chatResult.fallbackReason;
                                                         const message = await addMessage({
                                                                 sessionId,
                                                                 role: "agent_critique",
                                                                 agentId: critic.id,
                                                                 content: critique,
                                                                 model: critic.model ?? null,
-                                                                meta: { targetMessageId: p.id, stage: "critique", fallback: fallbackUsed },
+                                                                meta,
                                                         });
                                                         stageEvents.push(
-                                                                `[${critic.name}] critique stored as #${message.id} targeting proposal #${p.id}${fallbackUsed ? " (fallback)" : ""}`
+                                                                `[${critic.name}] critique stored as #${message.id} targeting proposal #${p.id} via ${actualProvider}${fallbackUsed ? " (fallback)" : ""}`
                                                         );
                                                 });
                                 })
@@ -416,12 +534,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                 let rationale = "";
                                                 let fallbackUsed = false;
                                                 try {
-                                                        const response = await agentChat(a, keys, [
+                                                        const chatResult = await agentChat(a, keys, [
                                                                 { role: "system", content: `You are ${a.name}. Evaluate the quality, clarity, and factuality of the proposal. Reply ONLY with a JSON object: {"score": 0-100, "reason": "short rationale"}.` },
                                                                 { role: "user", content: `Proposal:\n\n${p.content}\n\nScore it.` },
                                                         ]);
+                                                        if (chatResult.fallbackReason) {
+                                                                stageEvents.push(
+                                                                        `[${a.name}] vote rerouted via ${chatResult.providerUsed} (fallback): ${chatResult.fallbackReason}`
+                                                                );
+                                                        }
                                                         try {
-                                                                const j = JSON.parse(response);
+                                                                const j = JSON.parse(chatResult.content);
                                                                 if (typeof j.score === "number") score = Math.max(0, Math.min(100, Math.round(j.score)));
                                                                 if (typeof j.reason === "string") rationale = j.reason;
                                                         } catch (parseErr: any) {

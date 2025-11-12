@@ -52,25 +52,27 @@ export interface MagiConsensus {
 }
 
 export interface CreateSessionRequestBody {
-	question: string;
-	userId?: string;
-	keys?: {
-		openai?: string;
-		anthropic?: string;
-		grok?: string;
-	};
+        question: string;
+        userId?: string;
+        keys?: {
+                openai?: string;
+                anthropic?: string;
+                grok?: string;
+                xai?: string;
+        };
 }
 
 export type MagiWorkflowStep = "propose" | "critique" | "vote" | "consensus";
 
 export interface StepRequestBody {
-	step: MagiWorkflowStep;
-	userId?: string;
-	keys?: {
-		openai?: string;
-		anthropic?: string;
-		grok?: string;
-	};
+        step: MagiWorkflowStep;
+        userId?: string;
+        keys?: {
+                openai?: string;
+                anthropic?: string;
+                grok?: string;
+                xai?: string;
+        };
 }
 
 export interface MagiDiagnosticsProposalSummary {
