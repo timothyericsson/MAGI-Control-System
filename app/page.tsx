@@ -1,6 +1,7 @@
 import AuditControl from "@/components/AuditControl";
 import MagiTriad from "@/components/MagiTriad";
 import RequireAuth from "@/components/RequireAuth";
+import MagiConsensusControl from "@/components/MagiConsensusControl";
 
 export default function Page() {
 	return (
@@ -19,6 +20,8 @@ export default function Page() {
 				</div>
 
 				<MagiTriad />
+
+				<MagiConsensusControl />
 
 				<div className="divider my-10" />
 

@@ -20,11 +20,16 @@ export default function KeyInput({
 	const [value, setValue] = useState("");
 	const [status, setStatus] = useState<"idle" | "saving" | "transmitting" | "waiting" | "success" | "error">("idle");
 	const [errorText, setErrorText] = useState<string | null>(null);
+	const [linked, setLinked] = useState<boolean>(false);
 
 	useEffect(() => {
 		const existing = safeLoad(storageKey) ?? "";
 		setValue(existing);
 	}, [storageKey]);
+
+	useEffect(() => {
+		setLinked(Boolean(safeLoad(verifiedKey)));
+	}, [verifiedKey]);
 
 	async function handleSave() {
 		const trimmed = value.trim();
@@ -54,10 +59,12 @@ export default function KeyInput({
 			// Step 3: mark verified
 			safeSave(verifiedKey, "true");
 			setStatus("success");
+			setLinked(true);
 		} catch (e: any) {
 			safeRemove(verifiedKey);
 			setStatus("error");
 			setErrorText(e?.message || "Verification error");
+			setLinked(false);
 		}
 	}
 
@@ -67,6 +74,7 @@ export default function KeyInput({
 		setValue("");
 		setStatus("idle");
 		setErrorText(null);
+		setLinked(false);
 	}
 
 	return (
@@ -119,7 +127,11 @@ export default function KeyInput({
 				</button>
 				{status === "success" && <span className="text-xs text-magiGreen">Link established</span>}
 				{status === "error" && <span className="text-xs text-red-400">{errorText || "Verification failed"}</span>}
-				{status === "idle" && <span className="text-xs text-white/40">Awaiting key</span>}
+				{status === "idle" && (
+					<span className={`text-xs ${linked ? "text-magiGreen" : "text-white/40"}`}>
+						{linked ? "Linked" : "Awaiting key"}
+					</span>
+				)}
 				{(status === "saving" || status === "transmitting" || status === "waiting") && (
 					<span className="text-xs text-white/60">Establishing link…</span>
 				)}
