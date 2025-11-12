@@ -61,14 +61,64 @@ export interface CreateSessionRequestBody {
 	};
 }
 
+export type MagiWorkflowStep = "propose" | "critique" | "vote" | "consensus";
+
 export interface StepRequestBody {
-	step: "propose" | "critique" | "vote" | "consensus";
+	step: MagiWorkflowStep;
 	userId?: string;
 	keys?: {
 		openai?: string;
 		anthropic?: string;
 		grok?: string;
 	};
+}
+
+export interface MagiDiagnosticsProposalSummary {
+	id: number;
+	fallback: boolean;
+	preview: string;
+}
+
+export interface MagiDiagnosticsCritiqueSummary {
+	id: number;
+	targetMessageId: number | null;
+	fallback: boolean;
+	preview: string;
+}
+
+export interface MagiDiagnosticsVoteSummary {
+	id: number;
+	targetMessageId: number;
+	score: number;
+	rationale: string | null;
+	fallback: boolean;
+}
+
+export interface MagiStepDiagnosticsAgent {
+	agentId: string;
+	name: string;
+	provider: MagiAgent["provider"];
+	proposals: MagiDiagnosticsProposalSummary[];
+	critiquesAuthored: MagiDiagnosticsCritiqueSummary[];
+	critiquesReceived: MagiDiagnosticsCritiqueSummary[];
+	votesCast: MagiDiagnosticsVoteSummary[];
+	fallbackCount: number;
+}
+
+export interface MagiStepDiagnostics {
+	step: MagiWorkflowStep;
+	timestamp: string;
+	totals: {
+		proposals: number;
+		critiques: number;
+		votes: number;
+		consensus: number;
+	};
+	agents: MagiStepDiagnosticsAgent[];
+	events: string[];
+	winningProposalId?: number | null;
+	winningScore?: number | null;
+	consensusMessageId?: number | null;
 }
 
 
