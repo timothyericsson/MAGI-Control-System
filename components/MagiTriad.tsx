@@ -133,7 +133,7 @@ export default function MagiTriad() {
 			{Object.values(active).filter(Boolean).length === 3 && (
 				<svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
 					<defs>
-						<linearGradient id="triadGlow" x1="0" y1="0" x2="1" y2="1">
+						<linearGradient id="triadGlow" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
 							<stop offset="0%" stopColor="#00D1FF" />
 							<stop offset="50%" stopColor="#FFA726" />
 							<stop offset="100%" stopColor="#00FF7F" />
