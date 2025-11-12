@@ -310,14 +310,46 @@ export default function MagiConsensusControl() {
 		for (const a of agents) m[a.id] = a;
 		return m;
 	}, [agents]);
-	const votesByProposal = useMemo(() => {
-		const m: Record<number, MagiVote[]> = {};
+        const agentIdLookup = useMemo(() => {
+                const map: Record<string, string> = {};
+                for (const agent of agents) {
+                        const canonical = agent.id;
+                        if (!canonical) continue;
+                        map[canonical] = canonical;
+                        if (agent.slug) {
+                                map[agent.slug] = canonical;
+                                map[agent.slug.toLowerCase()] = canonical;
+                                map[agent.slug.toUpperCase()] = canonical;
+                        }
+                        if (agent.name) {
+                                map[agent.name] = canonical;
+                                map[agent.name.toLowerCase()] = canonical;
+                                map[agent.name.toUpperCase()] = canonical;
+                        }
+                }
+                return map;
+        }, [agents]);
+        const votesByProposal = useMemo(() => {
+                const m: Record<number, MagiVote[]> = {};
+                const normalizeAgentId = (rawId: string): string => {
+                        if (!rawId) return rawId;
+                        const direct = agentIdLookup[rawId];
+                        if (direct) return direct;
+                        const lower = agentIdLookup[rawId.toLowerCase()];
+                        if (lower) return lower;
+                        const upper = agentIdLookup[rawId.toUpperCase()];
+                        if (upper) return upper;
+                        return rawId;
+                };
                 for (const v of votes) {
+                        const normalizedAgentId = normalizeAgentId(v.agent_id);
+                        const voteRecord =
+                                normalizedAgentId === v.agent_id ? v : { ...v, agent_id: normalizedAgentId };
                         if (!m[v.target_message_id]) m[v.target_message_id] = [];
-                        m[v.target_message_id].push(v);
+                        m[v.target_message_id].push(voteRecord);
                 }
                 return m;
-        }, [votes]);
+        }, [agentIdLookup, votes]);
 	const consensusMessageId = useMemo(() => displayFinal?.id ?? messages.find((m) => m.role === "consensus")?.id ?? null, [displayFinal, messages]);
 	const proposalByAgent: Record<string, MagiMessage | undefined> = useMemo(() => {
 		const map: Record<string, MagiMessage | undefined> = {};
