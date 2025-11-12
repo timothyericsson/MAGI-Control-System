@@ -50,6 +50,7 @@ export default function MagiConsensusControl() {
                         openai: safeLoad("magi_provider_openai_api_key") || undefined,
                         anthropic: safeLoad("magi_provider_anthropic_api_key") || undefined,
                         grok: safeLoad("magi_provider_grok_api_key") || undefined,
+                        xai: safeLoad("magi_provider_grok_api_key") || safeLoad("magi_provider_xai_api_key") || undefined,
                 };
         }, []);
 
