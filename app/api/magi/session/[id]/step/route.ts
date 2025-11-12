@@ -2,13 +2,14 @@
 
 import { NextRequest } from "next/server";
 import {
-	addMessage,
-	addVote,
-	getSessionFull,
-	listAgents,
-	setSessionStatus,
-	upsertConsensus,
+        addMessage,
+        addVote,
+        getSessionFull,
+        listAgents,
+        setSessionStatus,
+        upsertConsensus,
 } from "@/lib/magiRepo";
+import { canonicalModelFor } from "@/lib/magiModels";
 import type {
         MagiAgent,
         MagiMessage,
@@ -24,8 +25,6 @@ type ProviderKeyMap = { openai?: string; anthropic?: string; grok?: string; xai?
 type AgentChatResult = {
         content: string;
         providerUsed: "openai" | "anthropic" | "grok";
-        fallbackProvider?: "openai";
-        fallbackReason?: string;
 };
 
 function keyForAgent(agent: MagiAgent, keys?: ProviderKeyMap): string | undefined {
@@ -285,13 +284,7 @@ async function agentChat(
         keys: ProviderKeyMap | undefined,
         messages: { role: "system" | "user" | "assistant"; content: string }[]
 ): Promise<AgentChatResult> {
-        const model =
-                agent.model ||
-                (agent.provider === "openai"
-                        ? "gpt-4o-mini"
-                        : agent.provider === "anthropic"
-                        ? "claude-3-5-sonnet"
-                        : "grok-2-mini");
+        const model = canonicalModelFor(agent.provider, agent.model);
 
         async function invokePrimary(provider: "openai" | "anthropic" | "grok", apiKey: string, label: string) {
                 if (provider === "openai") {
@@ -357,11 +350,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                         { role: "user", content: userQuestion },
                                                 ]);
                                                 content = chatResult.content;
-                                                if (chatResult.fallbackReason) {
-                                                        stageEvents.push(
-                                                                `[${a.name}] proposal rerouted via ${chatResult.providerUsed} (fallback): ${chatResult.fallbackReason}`
-                                                        );
-                                                }
                                                 if (!content) {
                                                         fallbackUsed = true;
                                                         stageEvents.push(`[${a.name}] proposal empty response; using fallback text.`);
@@ -379,8 +367,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                 fallback: fallbackUsed,
                                                 actualProvider,
                                         };
-                                        if (chatResult?.fallbackProvider) meta.fallbackProvider = chatResult.fallbackProvider;
-                                        if (chatResult?.fallbackReason) meta.fallbackReason = chatResult.fallbackReason;
                                         const message = await addMessage({
                                                 sessionId,
                                                 role: "agent_proposal",
@@ -451,11 +437,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                                         { role: "user", content: `Critique this proposal:\n\n${textForCritique}` },
                                                                 ]);
                                                                 critique = chatResult.content;
-                                                                if (chatResult.fallbackReason) {
-                                                                        stageEvents.push(
-                                                                                `[${critic.name}] critique rerouted via ${chatResult.providerUsed} (fallback): ${chatResult.fallbackReason}`
-                                                                        );
-                                                                }
                                                                 if (!critique) {
                                                                         fallbackUsed = true;
                                                                         stageEvents.push(`[${critic.name}] critique empty for proposal #${p.id}; using fallback text.`);
@@ -473,8 +454,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                                 fallback: fallbackUsed,
                                                                 actualProvider,
                                                         };
-                                                        if (chatResult?.fallbackProvider) meta.fallbackProvider = chatResult.fallbackProvider;
-                                                        if (chatResult?.fallbackReason) meta.fallbackReason = chatResult.fallbackReason;
                                                         const message = await addMessage({
                                                                 sessionId,
                                                                 role: "agent_critique",
@@ -519,11 +498,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                                 { role: "system", content: `You are ${a.name}. Evaluate the quality, clarity, and factuality of the proposal. Reply ONLY with a JSON object: {"score": 0-100, "reason": "short rationale"}.` },
                                                                 { role: "user", content: `Proposal:\n\n${p.content}\n\nScore it.` },
                                                         ]);
-                                                        if (chatResult.fallbackReason) {
-                                                                stageEvents.push(
-                                                                        `[${a.name}] vote rerouted via ${chatResult.providerUsed} (fallback): ${chatResult.fallbackReason}`
-                                                                );
-                                                        }
                                                         try {
                                                                 const j = JSON.parse(chatResult.content);
                                                                 if (typeof j.score === "number") score = Math.max(0, Math.min(100, Math.round(j.score)));
