@@ -3,9 +3,9 @@ import type { MagiAgent } from "@/lib/magiTypes";
 type Provider = MagiAgent["provider"];
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
-        openai: "gpt-4o-mini",
-        anthropic: "claude-3-5-sonnet-20240620",
-        grok: "grok-2-latest",
+openai: "gpt-4o",
+anthropic: "claude-3-5-sonnet-20240620",
+grok: "grok-2-latest",
 };
 
 /**
