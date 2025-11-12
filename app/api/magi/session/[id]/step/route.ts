@@ -136,10 +136,19 @@ function buildDiagnostics(params: {
                 const voteSummaries = agentVotes.map((v) => {
                         const rationale = v.rationale ?? null;
                         const fallback = typeof rationale === "string" && rationale.toLowerCase().includes("heuristic");
+                        const rawScore = (v as unknown as { score: number | string | null | undefined }).score;
+                        const parsedScore =
+                                typeof rawScore === "number"
+                                        ? rawScore
+                                        : typeof rawScore === "string"
+                                                ? Number(rawScore)
+                                                : null;
+                        const score =
+                                typeof parsedScore === "number" && Number.isFinite(parsedScore) ? parsedScore : 0;
                         return {
                                 id: v.id,
                                 targetMessageId: v.target_message_id,
-                                score: v.score,
+                                score,
                                 rationale,
                                 fallback,
                         };
