@@ -9,11 +9,37 @@ import type {
 	MagiVote,
 } from "@/lib/magiTypes";
 
+const DEFAULT_AGENTS: Array<{
+        slug: MagiAgent["slug"];
+        name: string;
+        provider: MagiAgent["provider"];
+        model: string | null;
+        color: string | null;
+}> = [
+        { slug: "casper", name: "CASPER", provider: "openai", model: "gpt-4o-mini", color: "#38bdf8" },
+        { slug: "balthasar", name: "BALTHASAR", provider: "anthropic", model: "claude-3-5-sonnet", color: "#f472b6" },
+        { slug: "melchior", name: "MELCHIOR", provider: "grok", model: "grok-2-mini", color: "#facc15" },
+];
+
 export async function listAgents(): Promise<MagiAgent[]> {
-	const supabase = getSupabaseServer();
-	const { data, error } = await supabase.from("magi_agents").select("*").order("slug", { ascending: true });
-	if (error) throw error;
-	return data as unknown as MagiAgent[];
+        const supabase = getSupabaseServer();
+        const { data, error } = await supabase.from("magi_agents").select("*").order("slug", { ascending: true });
+        if (error) throw error;
+        const present = new Set((data || []).map((row: { slug: string }) => row.slug));
+        const missing = DEFAULT_AGENTS.filter((agent) => !present.has(agent.slug));
+        if (missing.length > 0) {
+                const { error: seedError } = await supabase
+                        .from("magi_agents")
+                        .upsert(missing, { onConflict: "slug" });
+                if (seedError) throw seedError;
+                const { data: refreshed, error: refreshError } = await supabase
+                        .from("magi_agents")
+                        .select("*")
+                        .order("slug", { ascending: true });
+                if (refreshError) throw refreshError;
+                return refreshed as unknown as MagiAgent[];
+        }
+        return (data || []) as unknown as MagiAgent[];
 }
 
 export async function createSession(userId: string, question: string): Promise<MagiSession> {
