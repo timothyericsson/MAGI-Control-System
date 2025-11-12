@@ -280,17 +280,6 @@ async function callAnthropic(
 	return String(txt).trim();
 }
 
-function normalizeMessagesForFallback(agent: MagiAgent, messages: { role: "system" | "user" | "assistant"; content: string }[]) {
-        const systemMsg = messages.find((m) => m.role === "system")?.content ?? "";
-        const remaining = messages.filter((m) => m.role !== "system");
-        const persona = `You are ${agent.name}, a MAGI core originally running on provider ${agent.provider.toUpperCase()}. Maintain ${agent.name}'s distinctive analytical voice.`;
-        const combinedSystem = [persona, systemMsg].filter(Boolean).join("\n\n");
-        return [
-                { role: "system", content: combinedSystem },
-                ...remaining,
-        ] as { role: "system" | "user" | "assistant"; content: string }[];
-}
-
 async function agentChat(
         agent: MagiAgent,
         keys: ProviderKeyMap | undefined,
@@ -332,23 +321,6 @@ async function agentChat(
                 }
         } else {
                 primaryError = new Error(`Missing key for ${agent.provider}`);
-        }
-
-        // If primary provider failed but we have an OpenAI key, fall back to OpenAI to keep the agent producing content.
-        const openaiKey = keys?.openai;
-        if (openaiKey) {
-                const fallbackMessages = normalizeMessagesForFallback(agent, messages);
-                const txt = await withTimeout(
-                        callOpenAIChat(openaiKey, "gpt-4o-mini", fallbackMessages, agent.slug),
-                        20000,
-                        "openai-fallback"
-                );
-                return {
-                        content: txt,
-                        providerUsed: "openai",
-                        fallbackProvider: "openai",
-                        fallbackReason: primaryError ? primaryError.message : undefined,
-                };
         }
 
         throw primaryError ?? new Error(`Unable to reach ${agent.name}`);
