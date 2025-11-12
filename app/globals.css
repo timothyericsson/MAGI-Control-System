@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+	--panel-radius: 10px;
+}
+
+.title-text {
+	font-family: var(--font-orbitron), system-ui, sans-serif;
+	letter-spacing: 0.08em;
+}
+
+.ui-text {
+	font-family: var(--font-rajdhani), system-ui, sans-serif;
+	letter-spacing: 0.04em;
+}
+
+.magi-panel {
+	border-radius: var(--panel-radius);
+	background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+	border: 1px solid rgba(255,255,255,0.12);
+}
+
+.divider {
+	background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0) 100%);
+	height: 1px;
+}
+
+/* Cinematic animations */
+@keyframes glowPulse {
+	0%, 100% { box-shadow: 0 0 10px rgba(255,255,255,0.12); }
+	50% { box-shadow: 0 0 22px rgba(255,255,255,0.28); }
+}
+
+@keyframes scanLine {
+	0% { transform: translateY(-100%); opacity: 0; }
+	10% { opacity: 0.35; }
+	50% { opacity: 0.15; }
+	100% { transform: translateY(120%); opacity: 0; }
+}
+
+@keyframes dashMove {
+	0% { stroke-dashoffset: 120; }
+	100% { stroke-dashoffset: 0; }
+}
+
+.triad-dash {
+	stroke-dasharray: 12;
+	animation: dashMove 2.2s linear infinite;
+}
+
+.keyinput-focus {
+	animation: glowPulse 2s ease-in-out infinite;
+}
+
+.keyinput-scan::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0) 100%);
+	animation: scanLine 1.6s linear infinite;
+	pointer-events: none;
+}
+
+/* Boot-up sequence */
+@keyframes bootFlicker {
+	0% { opacity: 0; }
+	10% { opacity: 1; }
+	20% { opacity: 0.6; }
+	30% { opacity: 1; }
+	45% { opacity: 0.7; }
+	60% { opacity: 1; }
+	100% { opacity: 1; }
+}
+
+@keyframes sweep {
+	0% { transform: translateX(-100%); }
+	100% { transform: translateX(100%); }
+}
+
+.boot-flicker {
+	animation: bootFlicker 1.2s ease-out both;
+}
+
+.boot-glow {
+	text-shadow: 0 0 10px rgba(255,255,255,0.35), 0 0 22px rgba(255,255,255,0.2);
+}
+
+.boot-scan {
+	position: relative;
+	overflow: hidden;
+}
+
+.boot-scan::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0) 100%);
+	transform: translateX(-100%);
+	animation: sweep 1.4s ease-in-out infinite;
+}
+
+/* Verification step animations */
+@keyframes stepPulse {
+	0%, 100% { opacity: 0.6; }
+	50% { opacity: 1; }
+}
+.step-active {
+	animation: stepPulse 1.2s ease-in-out infinite;
+}
+.progress-bar {
+	height: 2px;
+	background: linear-gradient(90deg, rgba(0,209,255,0.2), rgba(255,167,38,0.6), rgba(0,255,127,0.2));
+}
+
+/* Auth cinematic */
+@keyframes panelIn {
+	0% { transform: translateY(12px) scale(0.985); opacity: 0; }
+	100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+.auth-panel-enter {
+	animation: panelIn 480ms cubic-bezier(.2,.7,.2,1) both;
+}
+.auth-title {
+	text-shadow: 0 0 8px rgba(255,255,255,0.35);
+	letter-spacing: 0.22em;
+}
+.auth-divider {
+	height: 1px;
+	background: linear-gradient(90deg, rgba(0,209,255,0.0) 0%, rgba(0,209,255,0.55) 50%, rgba(0,209,255,0.0) 100%);
+}
+.auth-scan {
+	position: relative;
+	overflow: hidden;
+}
+.auth-scan::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0) 100%);
+	animation: scanLine 1.8s linear infinite;
+}
+
+
