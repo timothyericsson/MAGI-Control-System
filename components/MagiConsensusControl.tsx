@@ -31,6 +31,37 @@ function normalizeVoteScores(raw: MagiVote[] | null | undefined): MagiVote[] {
         });
 }
 
+function votesFromDiagnostics(
+        diagnostics: MagiStepDiagnostics[] | MagiStepDiagnostics | null | undefined,
+        sessionId: string
+): MagiVote[] {
+        if (!diagnostics) return [];
+        const array = Array.isArray(diagnostics) ? diagnostics : [diagnostics];
+        const extracted: MagiVote[] = [];
+        for (const diag of array) {
+                if (!diag || !Array.isArray(diag.agents)) continue;
+                const timestamp = typeof diag.timestamp === "string" ? diag.timestamp : new Date().toISOString();
+                for (const agent of diag.agents) {
+                        if (!agent || !Array.isArray(agent.votesCast)) continue;
+                        for (const vote of agent.votesCast) {
+                                if (!vote || typeof vote.id !== "number" || typeof vote.targetMessageId !== "number") {
+                                        continue;
+                                }
+                                extracted.push({
+                                        id: vote.id,
+                                        session_id: sessionId,
+                                        agent_id: agent.agentId,
+                                        target_message_id: vote.targetMessageId,
+                                        score: vote.score,
+                                        rationale: vote.rationale ?? null,
+                                        created_at: timestamp,
+                                } as MagiVote);
+                        }
+                }
+        }
+        return extracted;
+}
+
 type Step = "idle" | "creating" | "proposing" | "critiquing" | "voting" | "finalizing" | "done" | "error";
 
 export default function MagiConsensusControl() {
@@ -48,6 +79,30 @@ export default function MagiConsensusControl() {
         const [displayCritiques, setDisplayCritiques] = useState<MagiMessage[]>([]);
         const [displayConsensus, setDisplayConsensus] = useState<MagiMessage | null>(null);
         const [displayVotes, setDisplayVotes] = useState<MagiVote[]>([]);
+
+        const replaceDisplayVotes = useCallback((votes: MagiVote[] | null | undefined) => {
+                setDisplayVotes(normalizeVoteScores(votes));
+        }, []);
+
+        const mergeDisplayVotes = useCallback((votes: MagiVote[] | null | undefined) => {
+                const normalized = normalizeVoteScores(votes);
+                if (normalized.length === 0) return;
+                setDisplayVotes((prev) => {
+                        if (prev.length === 0) {
+                                return normalized;
+                        }
+                        const map = new Map<number, MagiVote>();
+                        for (const existing of prev) {
+                                map.set(existing.id, existing);
+                        }
+                        for (const vote of normalized) {
+                                if (!map.has(vote.id)) {
+                                        map.set(vote.id, vote);
+                                }
+                        }
+                        return Array.from(map.values());
+                });
+        }, []);
 
 	const [verifiedAll, setVerifiedAll] = useState<boolean>(false);
 	useEffect(() => {
@@ -113,15 +168,15 @@ export default function MagiConsensusControl() {
                 setMessages(data.messages || []);
                 setConsensus(data.consensus || null);
                 setAgents(data.agents || []);
-                setDisplayVotes(normalizeVoteScores(data.votes as MagiVote[] | undefined));
-		// Update display buffers from fetched data if not already present
-		const fetchedProposals: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_proposal");
-		const fetchedCritiques: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_critique");
-		const fetchedFinal: MagiMessage | undefined = (data.messages || []).find((m: MagiMessage) => m.role === "consensus");
-		if (fetchedProposals.length > 0) setDisplayProposals(fetchedProposals);
+                replaceDisplayVotes(data.votes as MagiVote[] | undefined);
+                // Update display buffers from fetched data if not already present
+                const fetchedProposals: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_proposal");
+                const fetchedCritiques: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_critique");
+                const fetchedFinal: MagiMessage | undefined = (data.messages || []).find((m: MagiMessage) => m.role === "consensus");
+                if (fetchedProposals.length > 0) setDisplayProposals(fetchedProposals);
                 if (fetchedCritiques.length > 0) setDisplayCritiques(fetchedCritiques);
                 if (fetchedFinal) setDisplayConsensus(fetchedFinal);
-	}, []);
+        }, [replaceDisplayVotes]);
 
 	async function fetchFullRaw(sessionId: string) {
 		const res = await fetch(`/api/magi/session/${sessionId}?t=${Date.now()}`, { cache: "no-store" });
@@ -131,18 +186,21 @@ export default function MagiConsensusControl() {
 
 	async function waitFor(sessionId: string, predicate: (payload: any) => boolean, label: string, timeoutMs = 15000, intervalMs = 300) {
 		const start = Date.now();
-		while (Date.now() - start < timeoutMs) {
-			const data = await fetchFullRaw(sessionId);
-			if (data?.ok) {
-				// keep UI in sync while waiting
-				setSession(data.session);
-				setMessages(data.messages || []);
-				setConsensus(data.consensus || null);
-				setAgents(data.agents || []);
-				if (predicate(data)) {
-					return true;
-				}
-			}
+                while (Date.now() - start < timeoutMs) {
+                        const data = await fetchFullRaw(sessionId);
+                        if (data?.ok) {
+                                // keep UI in sync while waiting
+                                setSession(data.session);
+                                setMessages(data.messages || []);
+                                setConsensus(data.consensus || null);
+                                setAgents(data.agents || []);
+                                if (Array.isArray(data.votes)) {
+                                        replaceDisplayVotes(data.votes as MagiVote[]);
+                                }
+                                if (predicate(data)) {
+                                        return true;
+                                }
+                        }
 			await new Promise((r) => setTimeout(r, intervalMs));
 		}
 		setError(`${label} timed out. Please try again.`);
@@ -176,11 +234,12 @@ export default function MagiConsensusControl() {
                         }
                         return next;
                 });
-                if (Array.isArray(data.votes)) setDisplayVotes(normalizeVoteScores(data.votes as MagiVote[]));
+                if (Array.isArray(data.votes)) replaceDisplayVotes(data.votes as MagiVote[]);
                 if (data.diagnostics) {
                         const diagArray = Array.isArray(data.diagnostics)
                                 ? (data.diagnostics as MagiStepDiagnostics[])
                                 : [data.diagnostics as MagiStepDiagnostics];
+                        mergeDisplayVotes(votesFromDiagnostics(diagArray, sessionId));
                         const last = diagArray[diagArray.length - 1];
                         setDebug(formatDiagnosticSummary(last));
                 } else {
@@ -193,7 +252,7 @@ export default function MagiConsensusControl() {
                 // And a brief delayed refresh to avoid any replication lag
                 setTimeout(() => fetchFull(sessionId), 150);
                 return data;
-        }, [fetchFull, formatDiagnosticSummary, getKeys]);
+        }, [fetchFull, formatDiagnosticSummary, getKeys, mergeDisplayVotes, replaceDisplayVotes]);
 
         const onRun = useCallback(async () => {
                 setError(null);
