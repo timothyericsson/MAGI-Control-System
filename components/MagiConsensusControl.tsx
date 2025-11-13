@@ -288,13 +288,13 @@ export default function MagiConsensusControl() {
                                         </span>
                                 </div>
 				<label className="ui-text text-sm text-white/70 block mb-2">Question</label>
-				<textarea
-					value={question}
-					onChange={(e) => setQuestion(e.target.value)}
-					rows={3}
-					className="w-full rounded-md bg-white/5 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
-					placeholder="e.g., Outline a safe rollout plan for feature X"
-				/>
+                                <textarea
+                                        value={question}
+                                        onChange={(e) => setQuestion(e.target.value)}
+                                        rows={3}
+                                        className="w-full rounded-md bg-white/15 border border-white/30 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
+                                        placeholder="e.g., Outline a safe rollout plan for feature X"
+                                />
 				<div className="mt-3 flex items-center gap-3">
 					<button
 						onClick={onRun}
