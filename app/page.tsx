@@ -1,7 +1,7 @@
+import Link from "next/link";
 import AuditControl from "@/components/AuditControl";
 import MagiTriad from "@/components/MagiTriad";
 import RequireAuth from "@/components/RequireAuth";
-import MagiConsensusControl from "@/components/MagiConsensusControl";
 
 export default function Page() {
 	return (
@@ -21,11 +21,29 @@ export default function Page() {
 
 				<MagiTriad />
 
-				<MagiConsensusControl />
+                                <section className="mt-8">
+                                        <div className="magi-panel border-white/15 p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                                                <div>
+                                                        <h2 className="title-text text-lg font-bold text-white/90">MAGI Operations Console</h2>
+                                                        <p className="ui-text text-sm text-white/70 mt-1">
+                                                                When all three MAGI cores are authenticated, the central triangle portal will unlock.
+                                                                Use the <span className="text-magiGreen">Enter MAGI</span> control to launch the live consensus chamber in a dedicated window.
+                                                        </p>
+                                                </div>
+                                                <Link
+                                                        href="/console"
+                                                        target="_blank"
+                                                        rel="noreferrer noopener"
+                                                        className="ui-text text-sm px-4 py-2 rounded-md border border-white/20 bg-white/10 hover:bg-white/15 text-center"
+                                                >
+                                                        Open Console
+                                                </Link>
+                                        </div>
+                                </section>
 
-				<div className="divider my-10" />
+                                <div className="divider my-10" />
 
-				<AuditControl />
+                                <AuditControl />
 			</main>
 		</RequireAuth>
 	);
