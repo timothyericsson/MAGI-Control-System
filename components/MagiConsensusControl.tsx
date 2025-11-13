@@ -597,22 +597,7 @@ export default function MagiConsensusControl() {
                                 </div>
 
                                 <div className="magi-panel border-white/15 p-4">
-                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                                                <div>
-                                                        <h3 className="title-text text-base font-semibold text-white/90">Final Consensus</h3>
-                                                        <p className="ui-text text-sm text-white/60">Unified guidance delivered by the tri-core council.</p>
-                                                </div>
-                                                {consensusMessage && (
-                                                        <span className="ui-text text-xs text-white/50">Issued at {new Date(consensusMessage.created_at).toLocaleTimeString()}</span>
-                                                )}
-                                        </div>
-                                        <div className="mt-4 bg-white/5 border border-white/10 rounded p-4">
-                                                {consensusMessage ? (
-                                                        <div className="ui-text text-base text-white/85 whitespace-pre-wrap leading-relaxed">{consensusMessage.content}</div>
-                                                ) : (
-                                                        <div className="ui-text text-sm text-white/50">Consensus message not yet available.</div>
-                                                )}
-                                        </div>
+                                        <h3 className="title-text text-base font-semibold text-white/90">Final Consensus</h3>
                                 </div>
                         </div>
 
