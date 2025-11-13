@@ -519,8 +519,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                         const stageEvents: string[] = [];
                         const proposals = full.messages.filter((m) => m.role === "agent_proposal");
                         await Promise.all(
-                                agents.flatMap((a) =>
-                                        proposals.map(async (p) => {
+                                agents.flatMap((a) => {
+                                        const targetableProposals = proposals.filter((p) => p.agent_id !== a.id);
+                                        if (targetableProposals.length === 0) {
+                                                stageEvents.push(`[${a.name}] skipped voting: no other proposals available`);
+                                                return [] as Promise<unknown>[];
+                                        }
+                                        return targetableProposals.map(async (p) => {
                                                 let score = 50;
                                                 let rationale = "";
                                                 let fallbackUsed = false;
@@ -563,8 +568,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                 });
                                                 stageEvents.push(`[${a.name}] scored proposal #${p.id} = ${score}${fallbackUsed ? " (fallback)" : ""}`);
                                                 return voteRecord;
-                                        })
-                                )
+                                        });
+                                })
                         );
                         const refreshed = await getSessionFull(sessionId);
                         stageEvents.push(`Total votes recorded: ${refreshed.votes.length}`);
