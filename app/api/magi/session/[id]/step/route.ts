@@ -9,7 +9,7 @@ import {
         setSessionStatus,
         upsertConsensus,
 } from "@/lib/magiRepo";
-import { canonicalModelFor } from "@/lib/magiModels";
+import { DEFAULT_MODELS, canonicalModelFor } from "@/lib/magiModels";
 import type {
         MagiAgent,
         MagiMessage,
@@ -247,10 +247,11 @@ async function callXAIChat(
 
 async function callAnthropic(
         apiKey: string,
-        model: string,
+        model: string | null | undefined,
         messages: { role: "user" | "assistant" | "system"; content: string }[],
         userLabel?: string
 ): Promise<string> {
+        const resolvedModel = canonicalModelFor("anthropic", model);
         // Convert to Anthropic messages API format
         const sys = messages.find((m) => m.role === "system")?.content;
         const userTurns = messages.filter((m) => m.role !== "system").map((m) => ({
@@ -265,7 +266,7 @@ async function callAnthropic(
                         "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                        model: model || "claude-3-5-sonnet",
+                        model: resolvedModel || DEFAULT_MODELS.anthropic,
                         max_tokens: 400,
                         system: sys,
                         messages: userTurns,
@@ -273,7 +274,19 @@ async function callAnthropic(
                         ...(userLabel ? { metadata: { user_id: userLabel } } : {}),
                 }),
         });
-        if (!res.ok) throw new Error(`anthropic error ${res.status}`);
+        if (!res.ok) {
+                let detail = "";
+                try {
+                        detail = await res.text();
+                } catch {
+                        detail = "";
+                }
+                if (res.status === 404 && resolvedModel !== DEFAULT_MODELS.anthropic) {
+                        return callAnthropic(apiKey, DEFAULT_MODELS.anthropic, messages, userLabel);
+                }
+                const trimmedDetail = detail.trim();
+                throw new Error(`anthropic error ${res.status}${trimmedDetail ? `: ${trimmedDetail}` : ""}`);
+        }
         const data = await res.json();
         const textBlocks = Array.isArray(data?.content)
                 ? data.content.filter(
