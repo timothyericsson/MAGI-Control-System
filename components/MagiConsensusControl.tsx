@@ -131,18 +131,21 @@ export default function MagiConsensusControl() {
 
 	async function waitFor(sessionId: string, predicate: (payload: any) => boolean, label: string, timeoutMs = 15000, intervalMs = 300) {
 		const start = Date.now();
-		while (Date.now() - start < timeoutMs) {
-			const data = await fetchFullRaw(sessionId);
-			if (data?.ok) {
-				// keep UI in sync while waiting
-				setSession(data.session);
-				setMessages(data.messages || []);
-				setConsensus(data.consensus || null);
-				setAgents(data.agents || []);
-				if (predicate(data)) {
-					return true;
-				}
-			}
+                while (Date.now() - start < timeoutMs) {
+                        const data = await fetchFullRaw(sessionId);
+                        if (data?.ok) {
+                                // keep UI in sync while waiting
+                                setSession(data.session);
+                                setMessages(data.messages || []);
+                                setConsensus(data.consensus || null);
+                                setAgents(data.agents || []);
+                                if (Array.isArray(data.votes)) {
+                                        setDisplayVotes(normalizeVoteScores(data.votes as MagiVote[]));
+                                }
+                                if (predicate(data)) {
+                                        return true;
+                                }
+                        }
 			await new Promise((r) => setTimeout(r, intervalMs));
 		}
 		setError(`${label} timed out. Please try again.`);
