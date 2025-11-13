@@ -52,33 +52,33 @@ export default function RegisterPage() {
 				<form onSubmit={onSubmit} className="relative z-10 space-y-4 auth-scan">
 					<div>
 						<label className="ui-text text-sm text-white/75 block mb-1">Email</label>
-                                                <input
-                                                        type="email"
-                                                        required
-                                                        value={email}
-                                                        onChange={(e) => setEmail(e.target.value)}
-                                                        className="w-full rounded-md bg-white/15 border border-white/30 px-3 py-2 outline-none focus:ring-2 focus:ring-magiOrange/50"
-                                                />
+						<input
+							type="email"
+							required
+							value={email}
+							onChange={(e) => setEmail(e.target.value)}
+							className="w-full rounded-md bg-white/5 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiOrange/50"
+						/>
 					</div>
 					<div>
 						<label className="ui-text text-sm text-white/75 block mb-1">Password</label>
-                                                <input
-                                                        type="password"
-                                                        required
-                                                        value={password}
-                                                        onChange={(e) => setPassword(e.target.value)}
-                                                        className="w-full rounded-md bg-white/15 border border-white/30 px-3 py-2 outline-none focus:ring-2 focus:ring-magiOrange/50"
-                                                />
+						<input
+							type="password"
+							required
+							value={password}
+							onChange={(e) => setPassword(e.target.value)}
+							className="w-full rounded-md bg-white/5 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiOrange/50"
+						/>
 					</div>
 					<div>
 						<label className="ui-text text-sm text-white/75 block mb-1">Confirm Password</label>
-                                                <input
-                                                        type="password"
-                                                        required
-                                                        value={confirm}
-                                                        onChange={(e) => setConfirm(e.target.value)}
-                                                        className="w-full rounded-md bg-white/15 border border-white/30 px-3 py-2 outline-none focus:ring-2 focus:ring-magiOrange/50"
-                                                />
+						<input
+							type="password"
+							required
+							value={confirm}
+							onChange={(e) => setConfirm(e.target.value)}
+							className="w-full rounded-md bg-white/5 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiOrange/50"
+						/>
 					</div>
 					<button
 						type="submit"
