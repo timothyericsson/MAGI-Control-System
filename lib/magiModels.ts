@@ -4,7 +4,7 @@ type Provider = MagiAgent["provider"];
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
 openai: "gpt-4o",
-anthropic: "claude-3-5-sonnet-20240620",
+anthropic: "claude-3-5-sonnet-latest",
 grok: "grok-2-latest",
 };
 
@@ -17,10 +17,21 @@ export function canonicalModelFor(provider: Provider, requested?: string | null)
         const trimmed = (requested ?? "").trim();
 
         if (provider === "anthropic") {
-                if (!trimmed || trimmed === "claude-3-5-sonnet") {
+                if (!trimmed) {
                         return DEFAULT_MODELS.anthropic;
                 }
-                // Allow any explicit Claude identifier through unchanged.
+                const lowered = trimmed.toLowerCase();
+                if (
+                        lowered === "claude-3-5-sonnet" ||
+                        lowered === "claude-3.5-sonnet" ||
+                        lowered === "claude-3-5-sonnet-latest" ||
+                        lowered === "claude-3.5-sonnet-latest" ||
+                        lowered === "claude-3-5-sonnet-20240620" ||
+                        lowered === "claude-3.5-sonnet-20240620"
+                ) {
+                        return DEFAULT_MODELS.anthropic;
+                }
+                // Allow any other explicit Claude identifier through unchanged.
                 return trimmed;
         }
 
