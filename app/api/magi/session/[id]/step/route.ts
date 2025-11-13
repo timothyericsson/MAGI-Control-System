@@ -275,8 +275,17 @@ async function callAnthropic(
         });
         if (!res.ok) throw new Error(`anthropic error ${res.status}`);
         const data = await res.json();
-        const txt = data?.content?.[0]?.text ?? "";
-	return String(txt).trim();
+        const textBlocks = Array.isArray(data?.content)
+                ? data.content.filter(
+                          (block: any) =>
+                                  block &&
+                                  typeof block === "object" &&
+                                  block.type === "text" &&
+                                  typeof block.text === "string"
+                  )
+                : [];
+        const combinedText = textBlocks.map((block: any) => block.text.trim()).filter(Boolean).join("\n\n");
+        return combinedText || "";
 }
 
 async function agentChat(
