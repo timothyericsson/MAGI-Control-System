@@ -386,7 +386,7 @@ export default function MagiConsensusControl() {
                         "ui-text text-[11px] px-2 py-0.5 rounded-full border",
                         status === "complete" && "border-magiGreen/60 text-magiGreen/80 bg-magiGreen/10",
                         status === "active" && "border-magiBlue/60 text-magiBlue/80 bg-magiBlue/10",
-                        status === "pending" && "border-white/15 text-white/50 bg-white/5",
+                        status === "pending" && "border-white/15 text-white/50 bg-white/10",
                         status === "error" && "border-red-500/60 text-red-300 bg-red-500/10"
                 );
 
@@ -414,7 +414,7 @@ export default function MagiConsensusControl() {
                                         value={question}
                                         onChange={(e) => setQuestion(e.target.value)}
                                         rows={3}
-                                        className="w-full rounded-md bg-white/5 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
+                                        className="w-full rounded-md bg-white/10 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
                                         placeholder="e.g., Outline a safe rollout plan for feature X"
                                 />
                                 <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -451,7 +451,7 @@ export default function MagiConsensusControl() {
                                         {stageLabels.map((stage) => {
                                                 const status = computeStageStatus(stage.key);
                                                 return (
-                                                        <div key={stage.key} className="bg-white/5 border border-white/10 rounded p-3">
+                                                        <div key={stage.key} className="bg-white/10 border border-white/10 rounded p-3">
                                                                 <div className="flex items-center justify-between">
                                                                         <div className="title-text text-sm font-semibold text-white/80">{stage.label}</div>
                                                                         <span className={getStageBadgeClass(status)}>
@@ -486,7 +486,7 @@ export default function MagiConsensusControl() {
                                                         {agents.map((a) => {
                                                                 const agentProposals = sortedProposals.filter((p) => p.agent_id === a.id);
                                                                 return (
-                                                                        <div key={a.id} className="bg-white/5 border border-white/10 rounded p-3">
+                                                                        <div key={a.id} className="bg-white/10 border border-white/10 rounded p-3">
                                                                                 <div className="flex items-center justify-between">
                                                                                         <div className="title-text text-sm font-semibold text-white/80">{a.name}</div>
                                                                                         <span className="ui-text text-[11px] uppercase tracking-widest text-white/40">{a.provider}</span>
@@ -494,7 +494,7 @@ export default function MagiConsensusControl() {
                                                                                 <div className="mt-3 space-y-3">
                                                                                         {agentProposals.length > 0 ? (
                                                                                                 agentProposals.map((proposal) => (
-                                                                                                        <div key={proposal.id} className="bg-black/30 border border-white/10 rounded p-3">
+                                                                                                <div key={proposal.id} className="bg-black/50 border border-white/10 rounded p-3">
                                                                                                                 <div className="ui-text text-[11px] text-white/50">#{proposal.id}</div>
                                                                                                                 <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{proposal.content}</div>
                                                                                                         </div>
@@ -530,7 +530,7 @@ export default function MagiConsensusControl() {
                                                                         null;
                                                                 const targetProposal = targetId ? messageById[targetId] : undefined;
                                                                 return (
-                                                                        <div key={critique.id} className="bg-white/5 border border-white/10 rounded p-3">
+                                                                        <div key={critique.id} className="bg-white/10 border border-white/10 rounded p-3">
                                                                                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-1">
                                                                                         <div className="title-text text-sm font-semibold text-white/80">
                                                                                                 {agent ? agent.name : "Unknown agent"}
@@ -615,7 +615,7 @@ export default function MagiConsensusControl() {
                                         </div>
                                         <div className="space-y-3">
                                                 {diagnostics.map((diag, idx) => (
-                                                        <div key={`${diag.step}-${diag.timestamp}-${idx}`} className="bg-white/5 border border-white/10 rounded p-3">
+                                                        <div key={`${diag.step}-${diag.timestamp}-${idx}`} className="bg-white/10 border border-white/10 rounded p-3">
                                                                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-2">
                                                                         <div>
                                                                                 <div className="title-text text-sm font-semibold capitalize">{diag.step}</div>
