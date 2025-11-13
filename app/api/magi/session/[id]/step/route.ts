@@ -56,6 +56,40 @@ function previewText(content: string, maxLength = 120): string {
         return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
+function parseVoteResponse(raw: string | null | undefined): { score?: number | string; reason?: string } | null {
+        if (typeof raw !== "string") return null;
+        const trimmed = raw.trim();
+        if (!trimmed) return null;
+
+        const tryParse = (candidate: string) => {
+                try {
+                        const parsed = JSON.parse(candidate);
+                        return typeof parsed === "object" && parsed !== null ? (parsed as any) : null;
+                } catch (err) {
+                        return null;
+                }
+        };
+
+        const direct = tryParse(trimmed);
+        if (direct) return direct;
+
+        const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fenceMatch) {
+                const fromFence = tryParse(fenceMatch[1]);
+                if (fromFence) return fromFence;
+        }
+
+        const firstBrace = trimmed.indexOf("{");
+        const lastBrace = trimmed.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                const candidate = trimmed.slice(firstBrace, lastBrace + 1);
+                const parsed = tryParse(candidate);
+                if (parsed) return parsed;
+        }
+
+        return null;
+}
+
 function normalizeMeta(meta: Record<string, unknown> | null | undefined): Record<string, unknown> {
         if (!meta || typeof meta !== "object") return {};
         return meta as Record<string, unknown>;
@@ -495,13 +529,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                                 { role: "system", content: `You are ${a.name}. Evaluate the quality, clarity, and factuality of the proposal. Reply ONLY with a JSON object: {"score": 0-100, "reason": "short rationale"}.` },
                                                                 { role: "user", content: `Proposal:\n\n${p.content}\n\nScore it.` },
                                                         ]);
-                                                        try {
-                                                                const j = JSON.parse(chatResult.content);
-                                                                if (typeof j.score === "number") score = Math.max(0, Math.min(100, Math.round(j.score)));
-                                                                if (typeof j.reason === "string") rationale = j.reason;
-                                                        } catch (parseErr: any) {
+                                                        const parsed = parseVoteResponse(chatResult.content);
+                                                        if (parsed) {
+                                                                if (typeof parsed.score === "number") {
+                                                                        score = Math.max(0, Math.min(100, Math.round(parsed.score)));
+                                                                } else if (typeof parsed.score === "string") {
+                                                                        const parsedScore = Number(parsed.score);
+                                                                        if (Number.isFinite(parsedScore)) {
+                                                                                score = Math.max(0, Math.min(100, Math.round(parsedScore)));
+                                                                        }
+                                                                }
+                                                                if (typeof parsed.reason === "string" && parsed.reason.trim()) {
+                                                                        rationale = parsed.reason.trim();
+                                                                }
+                                                        } else {
                                                                 fallbackUsed = true;
-                                                                stageEvents.push(`[${a.name}] vote JSON parse fallback for proposal #${p.id}: ${parseErr?.message || "invalid JSON"}`);
+                                                                stageEvents.push(`[${a.name}] vote JSON parse fallback for proposal #${p.id}: unable to parse structured vote`);
                                                                 score = Math.max(30, Math.min(90, Math.round(Math.sqrt(p.content.length))));
                                                                 rationale = `${a.name} heuristic score`;
                                                         }

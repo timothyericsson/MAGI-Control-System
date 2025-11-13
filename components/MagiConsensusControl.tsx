@@ -38,7 +38,7 @@ export default function MagiConsensusControl() {
         const [step, setStep] = useState<Step>("idle");
         const [currentStage, setCurrentStage] = useState<Step>("idle");
         const [error, setError] = useState<string | null>(null);
-        const [, setSession] = useState<MagiSession | null>(null);
+        const [session, setSession] = useState<MagiSession | null>(null);
         const [messages, setMessages] = useState<MagiMessage[]>([]);
         const [, setConsensus] = useState<MagiConsensus | null>(null);
         const [agents, setAgents] = useState<MagiAgent[]>([]);
@@ -314,7 +314,31 @@ export default function MagiConsensusControl() {
         const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
         const critiques = displayCritiques.length > 0 ? displayCritiques : messages.filter((m) => m.role === "agent_critique");
         const consensusMessage = displayConsensus ?? messages.find((m) => m.role === "consensus") ?? null;
-        const votes = displayVotes;
+        const votesSource = useMemo(() => {
+                if (displayVotes.length > 0) return displayVotes;
+                const latestVoteDiag = [...diagnostics].reverse().find((diag) => diag.step === "vote");
+                if (!latestVoteDiag) return [];
+                const syntheticCreatedAt = latestVoteDiag.timestamp;
+                const sessionId = session?.id ?? "";
+                return latestVoteDiag.agents.flatMap((agent) =>
+                        agent.votesCast.map((vote) => ({
+                                id: vote.id,
+                                session_id: sessionId,
+                                agent_id: agent.agentId,
+                                target_message_id: vote.targetMessageId,
+                                score:
+                                        typeof vote.score === "number"
+                                                ? vote.score
+                                                : typeof vote.score === "string"
+                                                        ? Number(vote.score) || 0
+                                                        : 0,
+                                rationale: vote.rationale,
+                                created_at: syntheticCreatedAt,
+                        }))
+                ) as MagiVote[];
+        }, [displayVotes, diagnostics, session?.id]);
+
+        const votes = useMemo(() => normalizeVoteScores(votesSource), [votesSource]);
 
         const agentById = useMemo(() => {
                 const map: Record<string, MagiAgent> = {};
