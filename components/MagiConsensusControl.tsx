@@ -11,6 +11,7 @@ import type {
         MagiStepDiagnostics,
         MagiVote,
 } from "@/lib/magiTypes";
+import clsx from "classnames";
 
 function normalizeVoteScores(raw: MagiVote[] | null | undefined): MagiVote[] {
         if (!Array.isArray(raw)) return [];
@@ -33,9 +34,10 @@ function normalizeVoteScores(raw: MagiVote[] | null | undefined): MagiVote[] {
 type Step = "idle" | "creating" | "proposing" | "critiquing" | "voting" | "finalizing" | "done" | "error";
 
 export default function MagiConsensusControl() {
-	const [question, setQuestion] = useState("");
-	const [step, setStep] = useState<Step>("idle");
-	const [error, setError] = useState<string | null>(null);
+        const [question, setQuestion] = useState("");
+        const [step, setStep] = useState<Step>("idle");
+        const [currentStage, setCurrentStage] = useState<Step>("idle");
+        const [error, setError] = useState<string | null>(null);
         const [, setSession] = useState<MagiSession | null>(null);
         const [messages, setMessages] = useState<MagiMessage[]>([]);
         const [, setConsensus] = useState<MagiConsensus | null>(null);
@@ -43,9 +45,9 @@ export default function MagiConsensusControl() {
         const [debug, setDebug] = useState<string | null>(null);
         // Local display buffers to avoid UI depending on DB read latency
         const [displayProposals, setDisplayProposals] = useState<MagiMessage[]>([]);
-        const [, setDisplayCritiques] = useState<MagiMessage[]>([]);
-        const [, setDisplayFinal] = useState<MagiMessage | null>(null);
-        const [, setVotes] = useState<MagiVote[]>([]);
+        const [displayCritiques, setDisplayCritiques] = useState<MagiMessage[]>([]);
+        const [displayConsensus, setDisplayConsensus] = useState<MagiMessage | null>(null);
+        const [displayVotes, setDisplayVotes] = useState<MagiVote[]>([]);
         const [diagnostics, setDiagnostics] = useState<MagiStepDiagnostics[]>([]);
 
 	const [verifiedAll, setVerifiedAll] = useState<boolean>(false);
@@ -112,14 +114,14 @@ export default function MagiConsensusControl() {
                 setMessages(data.messages || []);
                 setConsensus(data.consensus || null);
                 setAgents(data.agents || []);
-                setVotes(normalizeVoteScores(data.votes as MagiVote[] | undefined));
+                setDisplayVotes(normalizeVoteScores(data.votes as MagiVote[] | undefined));
 		// Update display buffers from fetched data if not already present
 		const fetchedProposals: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_proposal");
 		const fetchedCritiques: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_critique");
 		const fetchedFinal: MagiMessage | undefined = (data.messages || []).find((m: MagiMessage) => m.role === "consensus");
 		if (fetchedProposals.length > 0) setDisplayProposals(fetchedProposals);
-		if (fetchedCritiques.length > 0) setDisplayCritiques(fetchedCritiques);
-		if (fetchedFinal) setDisplayFinal(fetchedFinal);
+                if (fetchedCritiques.length > 0) setDisplayCritiques(fetchedCritiques);
+                if (fetchedFinal) setDisplayConsensus(fetchedFinal);
 	}, []);
 
 	async function fetchFullRaw(sessionId: string) {
@@ -159,23 +161,23 @@ export default function MagiConsensusControl() {
 		const data = await res.json();
 		if (!data.ok) throw new Error(data.error || `Step ${s} failed`);
 		// Optimistically merge any returned artifacts so UI reflects immediately
-		setMessages((prev) => {
-			let next = prev.slice();
-			if (Array.isArray(data.proposals)) {
-				next = next.concat(data.proposals as MagiMessage[]);
-				setDisplayProposals(data.proposals as MagiMessage[]);
-			}
-			if (Array.isArray(data.critiques)) {
-				next = next.concat(data.critiques as MagiMessage[]);
-				setDisplayCritiques(data.critiques as MagiMessage[]);
-			}
-			if (data.finalMessage) {
-				next = next.concat([data.finalMessage as MagiMessage]);
-				setDisplayFinal(data.finalMessage as MagiMessage);
-			}
-			return next;
+                setMessages((prev) => {
+                        let next = prev.slice();
+                        if (Array.isArray(data.proposals)) {
+                                next = next.concat(data.proposals as MagiMessage[]);
+                                setDisplayProposals(data.proposals as MagiMessage[]);
+                        }
+                        if (Array.isArray(data.critiques)) {
+                                next = next.concat(data.critiques as MagiMessage[]);
+                                setDisplayCritiques(data.critiques as MagiMessage[]);
+                        }
+                        if (data.finalMessage) {
+                                next = next.concat([data.finalMessage as MagiMessage]);
+                                setDisplayConsensus(data.finalMessage as MagiMessage);
+                        }
+                        return next;
                 });
-                if (Array.isArray(data.votes)) setVotes(normalizeVoteScores(data.votes as MagiVote[]));
+                if (Array.isArray(data.votes)) setDisplayVotes(normalizeVoteScores(data.votes as MagiVote[]));
                 if (data.diagnostics) {
                         const diagArray = Array.isArray(data.diagnostics)
                                 ? (data.diagnostics as MagiStepDiagnostics[])
@@ -204,75 +206,177 @@ export default function MagiConsensusControl() {
                 setAgents([]);
                 setDisplayProposals([]);
                 setDisplayCritiques([]);
-                setDisplayFinal(null);
-                setVotes([]);
+                setDisplayConsensus(null);
+                setDisplayVotes([]);
                 setDiagnostics([]);
                 setDebug(null);
+                setCurrentStage("idle");
                 if (!supabaseBrowser) {
                         setError("Auth not initialized");
                         return;
                 }
-		if (!verifiedAll) {
-			setError("All three providers must be linked first.");
-			return;
-		}
-		const q = question.trim();
-		if (!q) {
-			setError("Please enter a question.");
-			return;
-		}
-		try {
-			setStep("creating");
-			const { data: auth } = await supabaseBrowser.auth.getSession();
-			const userId = auth.session?.user?.id;
-			if (!userId) {
-				setError("You must be signed in.");
-				setStep("error");
-				return;
-			}
+                if (!verifiedAll) {
+                        setError("All three providers must be linked first.");
+                        return;
+                }
+                const q = question.trim();
+                if (!q) {
+                        setError("Please enter a question.");
+                        return;
+                }
+                try {
+                        setStep("creating");
+                        setCurrentStage("creating");
+                        const { data: auth } = await supabaseBrowser.auth.getSession();
+                        const userId = auth.session?.user?.id;
+                        if (!userId) {
+                                setError("You must be signed in.");
+                                setStep("error");
+                                return;
+                        }
                         const keys = getKeys();
                         const createRes = await fetch("/api/magi/session", {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({ question: q, userId, keys }),
                         });
-			const created = await createRes.json();
-			if (!created.ok) {
-				throw new Error(created.error || "Failed to create session");
-			}
-			const sessionId: string = created.sessionId;
-			await fetchFull(sessionId);
+                        const created = await createRes.json();
+                        if (!created.ok) {
+                                throw new Error(created.error || "Failed to create session");
+                        }
+                        const sessionId: string = created.sessionId;
+                        await fetchFull(sessionId);
 
-			setStep("proposing");
-			const proposeData = await runStep(sessionId, "propose");
-			// If the step already returned proposals, don't wait further
-			const returnedProposals = Array.isArray(proposeData?.proposals) ? proposeData.proposals.length : 0;
-			if (returnedProposals === 0) {
-				const okProposals = await waitFor(
-					sessionId,
-					(d) => Array.isArray(d?.messages) && d.messages.some((m: any) => m.role === "agent_proposal"),
-					"Proposals"
-				);
-				if (!okProposals) return;
-			}
+                        setStep("proposing");
+                        setCurrentStage("proposing");
+                        const proposeData = await runStep(sessionId, "propose");
+                        // If the step already returned proposals, don't wait further
+                        const returnedProposals = Array.isArray(proposeData?.proposals) ? proposeData.proposals.length : 0;
+                        if (returnedProposals === 0) {
+                                const okProposals = await waitFor(
+                                        sessionId,
+                                        (d) => Array.isArray(d?.messages) && d.messages.some((m: any) => m.role === "agent_proposal"),
+                                        "Proposals"
+                                );
+                                if (!okProposals) return;
+                        }
+
+                        setStep("critiquing");
+                        setCurrentStage("critiquing");
+                        const critiqueData = await runStep(sessionId, "critique");
+                        const returnedCritiques = Array.isArray(critiqueData?.critiques) ? critiqueData.critiques.length : 0;
+                        if (returnedCritiques === 0) {
+                                const okCritiques = await waitFor(
+                                        sessionId,
+                                        (d) => Array.isArray(d?.messages) && d.messages.some((m: any) => m.role === "agent_critique"),
+                                        "Critiques"
+                                );
+                                if (!okCritiques) return;
+                        }
+
+                        setStep("voting");
+                        setCurrentStage("voting");
+                        const voteData = await runStep(sessionId, "vote");
+                        const returnedVotes = Array.isArray(voteData?.votes) ? voteData.votes.length : 0;
+                        if (returnedVotes === 0) {
+                                const okVotes = await waitFor(
+                                        sessionId,
+                                        (d) => Array.isArray(d?.votes) && d.votes.length > 0,
+                                        "Votes"
+                                );
+                                if (!okVotes) return;
+                        }
+
+                        setStep("finalizing");
+                        setCurrentStage("finalizing");
+                        const finalData = await runStep(sessionId, "consensus");
+                        const hasConsensus = Boolean(finalData?.finalMessage);
+                        if (!hasConsensus) {
+                                const okConsensus = await waitFor(
+                                        sessionId,
+                                        (d) =>
+                                                Array.isArray(d?.messages) &&
+                                                d.messages.some((m: any) => m.role === "consensus"),
+                                        "Consensus"
+                                );
+                                if (!okConsensus) return;
+                        }
 
                         setStep("done");
-                        setDebug("Initial proposals ready");
+                        setCurrentStage("done");
+                        setDebug("Consensus ready");
                 } catch (e: any) {
-			setError(e?.message || "Unexpected error");
-			setStep("error");
-		}
+                        setError(e?.message || "Unexpected error");
+                        setStep("error");
+                }
         }, [question, verifiedAll, fetchFull, runStep, getKeys]);
 
         const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
-	const firstProposalByAgent: Record<string, MagiMessage | undefined> = useMemo(() => {
-                const map: Record<string, MagiMessage | undefined> = {};
-                for (const p of proposals) {
-                        if (!p.agent_id || map[p.agent_id]) continue;
-                        map[p.agent_id] = p;
+        const critiques = displayCritiques.length > 0 ? displayCritiques : messages.filter((m) => m.role === "agent_critique");
+        const consensusMessage = displayConsensus ?? messages.find((m) => m.role === "consensus") ?? null;
+        const votes = displayVotes;
+
+        const agentById = useMemo(() => {
+                const map: Record<string, MagiAgent> = {};
+                for (const agent of agents) {
+                        map[agent.id] = agent;
                 }
                 return map;
+        }, [agents]);
+
+        const messageById = useMemo(() => {
+                const map: Record<number, MagiMessage> = {};
+                for (const msg of messages) {
+                        map[msg.id] = msg;
+                }
+                return map;
+        }, [messages]);
+
+        const stepOrder: Step[] = ["idle", "creating", "proposing", "critiquing", "voting", "finalizing", "done", "error"];
+
+        const computeStageStatus = useCallback(
+                (stageKey: "proposing" | "critiquing" | "voting" | "finalizing") => {
+                        if (step === "error") {
+                                const stageIndex = stepOrder.indexOf(stageKey);
+                                const progressIndex = stepOrder.indexOf(currentStage);
+                                return progressIndex >= stageIndex ? "error" : "pending";
+                        }
+                        const stageIndex = stepOrder.indexOf(stageKey);
+                        const currentIndex = stepOrder.indexOf(currentStage);
+                        if (currentStage === "done" || currentIndex > stageIndex) return "complete";
+                        if (currentIndex === stageIndex) return "active";
+                        return "pending";
+                },
+                [currentStage, step]
+        );
+
+        const stageLabels: { key: "proposing" | "critiquing" | "voting" | "finalizing"; label: string; description: string }[] = [
+                { key: "proposing", label: "Proposals", description: "Each MAGI core drafts an initial response." },
+                { key: "critiquing", label: "Critique", description: "Cores review peers and surface weaknesses." },
+                { key: "voting", label: "Voting", description: "Arguments are scored to select the strongest path." },
+                { key: "finalizing", label: "Consensus", description: "The council synthesizes a unified answer." },
+        ];
+
+        const getStageBadgeClass = (status: ReturnType<typeof computeStageStatus>) =>
+                clsx(
+                        "ui-text text-[11px] px-2 py-0.5 rounded-full border",
+                        status === "complete" && "border-magiGreen/60 text-magiGreen/80 bg-magiGreen/10",
+                        status === "active" && "border-magiBlue/60 text-magiBlue/80 bg-magiBlue/10",
+                        status === "pending" && "border-white/15 text-white/50 bg-white/5",
+                        status === "error" && "border-red-500/60 text-red-300 bg-red-500/10"
+                );
+
+        const sortedProposals = useMemo(() => {
+                return proposals.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
         }, [proposals]);
+
+        const sortedCritiques = useMemo(() => {
+                return critiques.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        }, [critiques]);
+
+        const sortedVotes = useMemo(() => {
+                return votes.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        }, [votes]);
 
 	return (
 		<section className="mt-8">
@@ -281,76 +385,212 @@ export default function MagiConsensusControl() {
 				<p className="ui-text text-white/60 text-sm">Ask once. Three cores deliberate, then answer.</p>
 			</header>
                         <div className="magi-panel border-white/15 p-4">
-                                {/* Stage chips */}
-                                <div className="flex gap-2 mb-3">
-                                        <span className="ui-text text-xs px-2 py-0.5 rounded bg-white/10 border border-white/15">
-                                                Proposals captured: {displayProposals.length || proposals.length}
-                                        </span>
-                                </div>
-				<label className="ui-text text-sm text-white/70 block mb-2">Question</label>
-				<textarea
-					value={question}
-					onChange={(e) => setQuestion(e.target.value)}
-					rows={3}
-					className="w-full rounded-md bg-white/5 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
-					placeholder="e.g., Outline a safe rollout plan for feature X"
-				/>
-				<div className="mt-3 flex items-center gap-3">
-					<button
-						onClick={onRun}
-						disabled={step !== "idle" && step !== "done" && step !== "error"}
-						className="px-4 py-1.5 rounded-md border border-white/20 bg-white/10 hover:bg-white/15 ui-text text-sm disabled:opacity-60"
-					>
+                                <label className="ui-text text-sm text-white/70 block mb-2">Question</label>
+                                <textarea
+                                        value={question}
+                                        onChange={(e) => setQuestion(e.target.value)}
+                                        rows={3}
+                                        className="w-full rounded-md bg-white/5 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
+                                        placeholder="e.g., Outline a safe rollout plan for feature X"
+                                />
+                                <div className="mt-3 flex flex-wrap items-center gap-3">
+                                        <button
+                                                onClick={onRun}
+                                                disabled={step !== "idle" && step !== "done" && step !== "error"}
+                                                className="px-4 py-1.5 rounded-md border border-white/20 bg-white/10 hover:bg-white/15 ui-text text-sm disabled:opacity-60"
+                                        >
                                                 {step === "creating"
                                                         ? "Creating…"
                                                         : step === "proposing"
                                                                 ? "Gathering proposals…"
-                                                                : step === "done"
-                                                                        ? "Run Again"
-                                                                        : "Run MAGI"}
-					</button>
-					{!verifiedAll && <span className="ui-text text-xs text-red-400">Link all three providers first</span>}
-					{error && <span className="ui-text text-xs text-red-400">{error}</span>}
-				</div>
-			</div>
+                                                                : step === "critiquing"
+                                                                        ? "Running critiques…"
+                                                                        : step === "voting"
+                                                                                ? "Collecting votes…"
+                                                                                : step === "finalizing"
+                                                                                        ? "Resolving consensus…"
+                                                                                        : step === "done"
+                                                                                                ? "Run Again"
+                                                                                                : "Run MAGI"}
+                                        </button>
+                                        <span className="ui-text text-xs text-white/50">
+                                                {displayProposals.length || proposals.length} proposals tracked
+                                        </span>
+                                        {!verifiedAll && <span className="ui-text text-xs text-red-400">Link all three providers first</span>}
+                                        {error && <span className="ui-text text-xs text-red-400">{error}</span>}
+                                </div>
+                        </div>
 
-			{/* Live per-agent activity */}
-			{agents.length > 0 && (
-				<div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-					{agents.map((a) => {
-                                                const proposal = firstProposalByAgent[a.id];
-                                                const status =
-                                                        step === "proposing" && !proposal
-                                                                ? "Thinking…"
-                                                                : proposal
-                                                                        ? "Proposed"
-                                                                        : step === "done"
-                                                                                ? "No proposal"
-                                                                                : "Idle";
+                        {/* Stage progress */}
+                        <div className="mt-4 magi-panel border-white/15 p-4">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                        {stageLabels.map((stage) => {
+                                                const status = computeStageStatus(stage.key);
                                                 return (
-                                                        <div key={a.id} className="magi-panel border-white/15 p-3">
+                                                        <div key={stage.key} className="bg-white/5 border border-white/10 rounded p-3">
                                                                 <div className="flex items-center justify-between">
-                                                                        <div className="title-text text-sm font-bold">{a.name}</div>
-                                                                        <div className="ui-text text-xs text-white/60">{status}</div>
+                                                                        <div className="title-text text-sm font-semibold text-white/80">{stage.label}</div>
+                                                                        <span className={getStageBadgeClass(status)}>
+                                                                                {status === "complete"
+                                                                                        ? "Complete"
+                                                                                        : status === "active"
+                                                                                                ? "In Progress"
+                                                                                                : status === "error"
+                                                                                                        ? "Error"
+                                                                                                        : "Pending"}
+                                                                        </span>
                                                                 </div>
-                                                                <div className="ui-text text-xs text-white/50 mt-1 uppercase tracking-wider">{a.provider}</div>
-                                                                <div className="mt-3 bg-white/5 border border-white/10 rounded p-3">
-                                                                        <div className="title-text text-[11px] font-semibold uppercase tracking-widest text-white/60">
-                                                                                Initial Proposal
-                                                                        </div>
-                                                                        <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">
-                                                                                {proposal
-                                                                                        ? proposal.content
-                                                                                        : step === "proposing"
-                                                                                                ? "Awaiting proposal…"
-                                                                                                : "No proposal available."}
-                                                                        </div>
-                                                                </div>
+                                                                <p className="ui-text text-xs text-white/60 mt-2">{stage.description}</p>
                                                         </div>
                                                 );
                                         })}
                                 </div>
-			)}
+                        </div>
+
+                        {/* Stage detail panels */}
+                        <div className="mt-4 space-y-4">
+                                <div className="magi-panel border-white/15 p-4">
+                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                                <div>
+                                                        <h3 className="title-text text-base font-semibold text-white/90">Proposal Drafts</h3>
+                                                        <p className="ui-text text-sm text-white/60">Individual outputs from each MAGI core.</p>
+                                                </div>
+                                                <span className="ui-text text-xs text-white/50">{sortedProposals.length} captured</span>
+                                        </div>
+                                        {agents.length > 0 ? (
+                                                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                                        {agents.map((a) => {
+                                                                const agentProposals = sortedProposals.filter((p) => p.agent_id === a.id);
+                                                                return (
+                                                                        <div key={a.id} className="bg-white/5 border border-white/10 rounded p-3">
+                                                                                <div className="flex items-center justify-between">
+                                                                                        <div className="title-text text-sm font-semibold text-white/80">{a.name}</div>
+                                                                                        <span className="ui-text text-[11px] uppercase tracking-widest text-white/40">{a.provider}</span>
+                                                                                </div>
+                                                                                <div className="mt-3 space-y-3">
+                                                                                        {agentProposals.length > 0 ? (
+                                                                                                agentProposals.map((proposal) => (
+                                                                                                        <div key={proposal.id} className="bg-black/30 border border-white/10 rounded p-3">
+                                                                                                                <div className="ui-text text-[11px] text-white/50">#{proposal.id}</div>
+                                                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{proposal.content}</div>
+                                                                                                        </div>
+                                                                                                ))
+                                                                                        ) : (
+                                                                                                <div className="ui-text text-sm text-white/50">No proposal recorded.</div>
+                                                                                        )}
+                                                                                </div>
+                                                                        </div>
+                                                                );
+                                                        })}
+                                                </div>
+                                        ) : (
+                                                <div className="ui-text text-sm text-white/50 mt-4">Awaiting agent telemetry.</div>
+                                        )}
+                                </div>
+
+                                <div className="magi-panel border-white/15 p-4">
+                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                                <div>
+                                                        <h3 className="title-text text-base font-semibold text-white/90">Cross-Critiques</h3>
+                                                        <p className="ui-text text-sm text-white/60">Challenges and risk calls surfaced between agents.</p>
+                                                </div>
+                                                <span className="ui-text text-xs text-white/50">{sortedCritiques.length} logged</span>
+                                        </div>
+                                        <div className="mt-4 space-y-3">
+                                                {sortedCritiques.length > 0 ? (
+                                                        sortedCritiques.map((critique) => {
+                                                                const agent = critique.agent_id ? agentById[critique.agent_id] : undefined;
+                                                                const targetId =
+                                                                        (critique.meta?.target_message_id as number | undefined) ||
+                                                                        (critique.meta?.targetMessageId as number | undefined) ||
+                                                                        null;
+                                                                const targetProposal = targetId ? messageById[targetId] : undefined;
+                                                                return (
+                                                                        <div key={critique.id} className="bg-white/5 border border-white/10 rounded p-3">
+                                                                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-1">
+                                                                                        <div className="title-text text-sm font-semibold text-white/80">
+                                                                                                {agent ? agent.name : "Unknown agent"}
+                                                                                        </div>
+                                                                                        <div className="ui-text text-xs text-white/50">#{critique.id}</div>
+                                                                                </div>
+                                                                                {targetProposal && (
+                                                                                        <div className="ui-text text-[11px] text-white/50 mt-1">
+                                                                                                Targets proposal #{targetProposal.id} by {targetProposal.agent_id && agentById[targetProposal.agent_id]?.name}
+                                                                                        </div>
+                                                                                )}
+                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{critique.content}</div>
+                                                                        </div>
+                                                                );
+                                                        })
+                                                ) : (
+                                                        <div className="ui-text text-sm text-white/50">No critiques have been recorded yet.</div>
+                                                )}
+                                        </div>
+                                </div>
+
+                                <div className="magi-panel border-white/15 p-4">
+                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                                <div>
+                                                        <h3 className="title-text text-base font-semibold text-white/90">Voting Ledger</h3>
+                                                        <p className="ui-text text-sm text-white/60">Numerical scores assigned to each surviving plan.</p>
+                                                </div>
+                                                <span className="ui-text text-xs text-white/50">{sortedVotes.length} votes tallied</span>
+                                        </div>
+                                        <div className="mt-4 overflow-x-auto">
+                                                {sortedVotes.length > 0 ? (
+                                                        <table className="min-w-full text-left">
+                                                                <thead>
+                                                                        <tr className="ui-text text-[11px] uppercase tracking-widest text-white/40">
+                                                                                <th className="py-2 pr-4 font-normal">Agent</th>
+                                                                                <th className="py-2 pr-4 font-normal">Target</th>
+                                                                                <th className="py-2 pr-4 font-normal">Score</th>
+                                                                                <th className="py-2 pr-4 font-normal">Rationale</th>
+                                                                        </tr>
+                                                                </thead>
+                                                                <tbody className="ui-text text-sm text-white/80">
+                                                                        {sortedVotes.map((vote) => {
+                                                                                const agent = agentById[vote.agent_id];
+                                                                                const target = messageById[vote.target_message_id];
+                                                                                return (
+                                                                                        <tr key={vote.id} className="border-t border-white/10">
+                                                                                                <td className="py-2 pr-4">{agent ? agent.name : vote.agent_id}</td>
+                                                                                                <td className="py-2 pr-4">
+                                                                                                        {target
+                                                                                                                ? `Proposal #${target.id} (${target.agent_id && agentById[target.agent_id]?.name})`
+                                                                                                                : `#${vote.target_message_id}`}
+                                                                                                </td>
+                                                                                                <td className="py-2 pr-4 font-semibold text-white">{vote.score}</td>
+                                                                                                <td className="py-2 pr-4 text-white/70 whitespace-pre-wrap">{vote.rationale || "—"}</td>
+                                                                                        </tr>
+                                                                                );
+                                                                        })}
+                                                                </tbody>
+                                                        </table>
+                                                ) : (
+                                                        <div className="ui-text text-sm text-white/50">No votes have been submitted.</div>
+                                                )}
+                                        </div>
+                                </div>
+
+                                <div className="magi-panel border-white/15 p-4">
+                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                                <div>
+                                                        <h3 className="title-text text-base font-semibold text-white/90">Final Consensus</h3>
+                                                        <p className="ui-text text-sm text-white/60">Unified guidance delivered by the tri-core council.</p>
+                                                </div>
+                                                {consensusMessage && (
+                                                        <span className="ui-text text-xs text-white/50">Issued at {new Date(consensusMessage.created_at).toLocaleTimeString()}</span>
+                                                )}
+                                        </div>
+                                        <div className="mt-4 bg-white/5 border border-white/10 rounded p-4">
+                                                {consensusMessage ? (
+                                                        <div className="ui-text text-base text-white/85 whitespace-pre-wrap leading-relaxed">{consensusMessage.content}</div>
+                                                ) : (
+                                                        <div className="ui-text text-sm text-white/50">Consensus message not yet available.</div>
+                                                )}
+                                        </div>
+                                </div>
+                        </div>
 
                         {debug && (
                                 <div className="ui-text text-xs text-white/50 mt-3">
