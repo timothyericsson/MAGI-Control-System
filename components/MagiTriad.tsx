@@ -1,7 +1,7 @@
 "use client";
 
 import MagiPanel from "@/components/MagiPanel";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { safeLoad } from "@/lib/localStore";
 import clsx from "classnames";
 
@@ -73,12 +73,8 @@ export default function MagiTriad() {
 		}
 	}, [allOn]);
 
-        const handleEnter = useCallback(() => {
-                window.open("/console", "_blank", "noopener,noreferrer");
-        }, []);
-
-        return (
-                <section className="relative w-full h-[600px] md:h-[680px] magi-triad">
+	return (
+		<section className="relative w-full h-[600px] md:h-[680px] magi-triad">
 			{/* Optional background image if present in /public */}
 			<div
 				aria-hidden
@@ -167,12 +163,12 @@ export default function MagiTriad() {
 			)}
 
 			{/* Boot-up center overlay */}
-                        {bootStage > 0 && (
-                                <div
-                                        className="absolute left-1/2 top-[46%] -translate-x-1/2 -translate-y-1/2 text-center select-none"
-                                        aria-live="polite"
-                                        aria-atomic="true"
-                                >
+			{bootStage > 0 && (
+				<div
+					className="absolute left-1/2 top-[46%] -translate-x-1/2 -translate-y-1/2 text-center select-none"
+					aria-live="polite"
+					aria-atomic="true"
+				>
 					{bootStage >= 1 && (
 						<div className="title-text text-white/70 tracking-[0.35em] text-xs md:text-sm mb-2 boot-flicker">
 							MAGI SYSTEM
@@ -183,23 +179,11 @@ export default function MagiTriad() {
 							OPERATIONAL
 						</div>
 					)}
-                                        {bootStage >= 3 && (
-                                                <>
-                                                        <div className="mt-3 w-[280px] md:w-[360px] h-[2px] mx-auto bg-white/15 boot-scan rounded-full" />
-                                                        <div className="mt-6 flex justify-center">
-                                                                <button
-                                                                        type="button"
-                                                                        onClick={handleEnter}
-                                                                        className="pointer-events-auto title-text tracking-[0.3em] uppercase text-xs md:text-sm px-6 py-3 rounded-md border border-white/40 bg-white/10 hover:bg-white/15 transition disabled:opacity-50"
-                                                                        disabled={!allOn}
-                                                                >
-                                                                        Enter MAGI
-                                                                </button>
-                                                        </div>
-                                                </>
-                                        )}
-                                </div>
-                        )}
+					{bootStage >= 3 && (
+						<div className="mt-3 w-[280px] md:w-[360px] h-[2px] mx-auto bg-white/15 boot-scan rounded-full" />
+					)}
+				</div>
+			)}
 		</section>
 	);
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import clsx from "classnames";
 import { supabaseBrowser } from "@/lib/supabaseClient";
 import { safeLoad } from "@/lib/localStore";
 import type {
@@ -35,18 +34,18 @@ type Step = "idle" | "creating" | "proposing" | "critiquing" | "voting" | "final
 
 export default function MagiConsensusControl() {
 	const [question, setQuestion] = useState("");
-        const [step, setStep] = useState<Step>("idle");
-        const [error, setError] = useState<string | null>(null);
-        const [session, setSession] = useState<MagiSession | null>(null);
+	const [step, setStep] = useState<Step>("idle");
+	const [error, setError] = useState<string | null>(null);
+        const [, setSession] = useState<MagiSession | null>(null);
         const [messages, setMessages] = useState<MagiMessage[]>([]);
-        const [consensus, setConsensus] = useState<MagiConsensus | null>(null);
+        const [, setConsensus] = useState<MagiConsensus | null>(null);
         const [agents, setAgents] = useState<MagiAgent[]>([]);
         const [debug, setDebug] = useState<string | null>(null);
         // Local display buffers to avoid UI depending on DB read latency
         const [displayProposals, setDisplayProposals] = useState<MagiMessage[]>([]);
-        const [displayCritiques, setDisplayCritiques] = useState<MagiMessage[]>([]);
-        const [displayFinal, setDisplayFinal] = useState<MagiMessage | null>(null);
-        const [votes, setVotes] = useState<MagiVote[]>([]);
+        const [, setDisplayCritiques] = useState<MagiMessage[]>([]);
+        const [, setDisplayFinal] = useState<MagiMessage | null>(null);
+        const [, setVotes] = useState<MagiVote[]>([]);
         const [diagnostics, setDiagnostics] = useState<MagiStepDiagnostics[]>([]);
 
 	const [verifiedAll, setVerifiedAll] = useState<boolean>(false);
@@ -123,18 +122,18 @@ export default function MagiConsensusControl() {
 		if (fetchedFinal) setDisplayFinal(fetchedFinal);
 	}, []);
 
-        const fetchFullRaw = useCallback(async (sessionId: string) => {
-                const res = await fetch(`/api/magi/session/${sessionId}?t=${Date.now()}`, { cache: "no-store" });
-                return res.json();
-        }, []);
+	async function fetchFullRaw(sessionId: string) {
+		const res = await fetch(`/api/magi/session/${sessionId}?t=${Date.now()}`, { cache: "no-store" });
+		const data = await res.json();
+		return data;
+	}
 
-        const waitFor = useCallback(
-                async (sessionId: string, predicate: (payload: any) => boolean, label: string, timeoutMs = 15000, intervalMs = 300) => {
-                        const start = Date.now();
-                        while (Date.now() - start < timeoutMs) {
-                                const data = await fetchFullRaw(sessionId);
-                                if (data?.ok) {
-                                        // keep UI in sync while waiting
+	async function waitFor(sessionId: string, predicate: (payload: any) => boolean, label: string, timeoutMs = 15000, intervalMs = 300) {
+		const start = Date.now();
+		while (Date.now() - start < timeoutMs) {
+			const data = await fetchFullRaw(sessionId);
+			if (data?.ok) {
+				// keep UI in sync while waiting
 				setSession(data.session);
 				setMessages(data.messages || []);
 				setConsensus(data.consensus || null);
@@ -144,13 +143,11 @@ export default function MagiConsensusControl() {
 				}
 			}
 			await new Promise((r) => setTimeout(r, intervalMs));
-                        }
-                        setError(`${label} timed out. Please try again.`);
-                        setStep("error");
-                        return false;
-                },
-                [fetchFullRaw]
-        );
+		}
+		setError(`${label} timed out. Please try again.`);
+		setStep("error");
+		return false;
+	}
 
         const runStep = useCallback(async (sessionId: string, s: "propose" | "critique" | "vote" | "consensus") => {
                 const keys = getKeys();
@@ -246,68 +243,29 @@ export default function MagiConsensusControl() {
 			const sessionId: string = created.sessionId;
 			await fetchFull(sessionId);
 
-                        setStep("proposing");
-                        const proposeData = await runStep(sessionId, "propose");
-                        const returnedProposals = Array.isArray(proposeData?.proposals) ? proposeData.proposals.length : 0;
-                        if (returnedProposals === 0) {
-                                const okProposals = await waitFor(
-                                        sessionId,
-                                        (d) => Array.isArray(d?.messages) && d.messages.some((m: any) => m.role === "agent_proposal"),
-                                        "Proposals"
-                                );
-                                if (!okProposals) return;
-                        }
-
-                        setStep("critiquing");
-                        const critiqueData = await runStep(sessionId, "critique");
-                        const returnedCritiques = Array.isArray(critiqueData?.critiques) ? critiqueData.critiques.length : 0;
-                        if (returnedCritiques === 0) {
-                                const okCritiques = await waitFor(
-                                        sessionId,
-                                        (d) => Array.isArray(d?.messages) && d.messages.some((m: any) => m.role === "agent_critique"),
-                                        "Critiques"
-                                );
-                                if (!okCritiques) return;
-                        }
-
-                        setStep("voting");
-                        const voteData = await runStep(sessionId, "vote");
-                        const returnedVotes = Array.isArray(voteData?.votes) ? voteData.votes.length : 0;
-                        if (returnedVotes === 0) {
-                                const okVotes = await waitFor(
-                                        sessionId,
-                                        (d) => Array.isArray(d?.votes) && d.votes.length > 0,
-                                        "Votes"
-                                );
-                                if (!okVotes) return;
-                        }
-
-                        setStep("finalizing");
-                        const consensusData = await runStep(sessionId, "consensus");
-                        const hasFinalMessage = Boolean(consensusData?.finalMessage) || Boolean(consensusData?.consensus);
-                        if (!hasFinalMessage) {
-                                const okConsensus = await waitFor(
-                                        sessionId,
-                                        (d) =>
-                                                (Array.isArray(d?.messages) && d.messages.some((m: any) => m.role === "consensus")) ||
-                                                Boolean(d?.consensus?.summary),
-                                        "Consensus"
-                                );
-                                if (!okConsensus) return;
-                        }
+			setStep("proposing");
+			const proposeData = await runStep(sessionId, "propose");
+			// If the step already returned proposals, don't wait further
+			const returnedProposals = Array.isArray(proposeData?.proposals) ? proposeData.proposals.length : 0;
+			if (returnedProposals === 0) {
+				const okProposals = await waitFor(
+					sessionId,
+					(d) => Array.isArray(d?.messages) && d.messages.some((m: any) => m.role === "agent_proposal"),
+					"Proposals"
+				);
+				if (!okProposals) return;
+			}
 
                         setStep("done");
-                        setDebug("Consensus complete");
+                        setDebug("Initial proposals ready");
                 } catch (e: any) {
-                        setError(e?.message || "Unexpected error");
-                        setStep("error");
-                }
-        }, [question, verifiedAll, fetchFull, runStep, getKeys, waitFor]);
+			setError(e?.message || "Unexpected error");
+			setStep("error");
+		}
+        }, [question, verifiedAll, fetchFull, runStep, getKeys]);
 
         const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
-        const critiques = displayCritiques.length > 0 ? displayCritiques : messages.filter((m) => m.role === "agent_critique");
-        const consensusMessage = displayFinal ?? messages.find((m) => m.role === "consensus") ?? null;
-        const firstProposalByAgent: Record<string, MagiMessage | undefined> = useMemo(() => {
+	const firstProposalByAgent: Record<string, MagiMessage | undefined> = useMemo(() => {
                 const map: Record<string, MagiMessage | undefined> = {};
                 for (const p of proposals) {
                         if (!p.agent_id || map[p.agent_id]) continue;
@@ -316,129 +274,50 @@ export default function MagiConsensusControl() {
                 return map;
         }, [proposals]);
 
-        const agentById = useMemo(() => {
-                const map: Record<string, MagiAgent> = {};
-                for (const a of agents) {
-                        map[a.id] = a;
-                }
-                return map;
-        }, [agents]);
-
-        const proposalById = useMemo(() => {
-                const map: Record<number, MagiMessage> = {};
-                for (const p of proposals) {
-                        map[p.id] = p;
-                }
-                return map;
-        }, [proposals]);
-
-        const voteBreakdown = useMemo(() => {
-                const aggregate = votes.reduce(
-                        (acc, vote) => {
-                                const current = acc.get(vote.target_message_id) || { total: 0, votes: [] as MagiVote[] };
-                                current.total += vote.score;
-                                current.votes.push(vote);
-                                acc.set(vote.target_message_id, current);
-                                return acc;
-                        },
-                        new Map<number, { total: number; votes: MagiVote[] }>()
-                );
-                return Array.from(aggregate.entries())
-                        .sort((a, b) => b[1].total - a[1].total)
-                        .map(([targetId, payload]) => ({ targetId, ...payload }));
-        }, [votes]);
-
-        const stageChips = useMemo(
-                () =>
-                        [
-                                { key: "creating" as Step, label: "Session", complete: Boolean(session) },
-                                { key: "proposing" as Step, label: "Proposals", complete: proposals.length > 0 },
-                                { key: "critiquing" as Step, label: "Critiques", complete: critiques.length > 0 },
-                                { key: "voting" as Step, label: "Voting", complete: votes.length > 0 },
-                                { key: "finalizing" as Step, label: "Consensus", complete: Boolean(consensusMessage) },
-                                { key: "done" as Step, label: "Complete", complete: step === "done" },
-                        ].map((chip) => ({ ...chip, active: step === chip.key })),
-                [session, proposals, critiques, votes, consensusMessage, step]
-        );
-
-        const runLabel = useMemo(() => {
-                switch (step) {
-                        case "creating":
-                                return "Creating session…";
-                        case "proposing":
-                                return "Gathering proposals…";
-                        case "critiquing":
-                                return "Running critiques…";
-                        case "voting":
-                                return "Collecting votes…";
-                        case "finalizing":
-                                return "Synthesizing consensus…";
-                        case "done":
-                                return "Run Again";
-                        case "error":
-                                return "Retry Run";
-                        default:
-                                return "Run MAGI";
-                }
-        }, [step]);
-
 	return (
 		<section className="mt-8">
 			<header className="mb-3">
 				<h2 className="title-text text-lg font-bold text-white/90">MAGI Consensus</h2>
 				<p className="ui-text text-white/60 text-sm">Ask once. Three cores deliberate, then answer.</p>
 			</header>
-                        <div className="magi-panel border-white/15 p-5">
-                                <div className="flex flex-wrap gap-2 mb-4">
-                                        {stageChips.map((chip) => (
-                                                <span
-                                                        key={chip.key}
-                                                        className={clsx(
-                                                                "ui-text text-xs px-2 py-0.5 rounded border tracking-[0.2em] uppercase",
-                                                                chip.complete
-                                                                        ? "bg-magiGreen/20 border-magiGreen/40 text-magiGreen/80"
-                                                                        : chip.active
-                                                                                ? "bg-white/15 border-white/40 text-white step-active"
-                                                                                : "bg-white/5 border-white/15 text-white/55"
-                                                        )}
-                                                >
-                                                        {chip.label}
-                                                </span>
-                                        ))}
+                        <div className="magi-panel border-white/15 p-4">
+                                {/* Stage chips */}
+                                <div className="flex gap-2 mb-3">
+                                        <span className="ui-text text-xs px-2 py-0.5 rounded bg-white/10 border border-white/15">
+                                                Proposals captured: {displayProposals.length || proposals.length}
+                                        </span>
                                 </div>
-                                <label className="ui-text text-sm text-white/70 block mb-2">Question</label>
+				<label className="ui-text text-sm text-white/70 block mb-2">Question</label>
                                 <textarea
                                         value={question}
                                         onChange={(e) => setQuestion(e.target.value)}
-                                        rows={4}
+                                        rows={3}
                                         className="w-full rounded-md bg-white/15 border border-white/30 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
                                         placeholder="e.g., Outline a safe rollout plan for feature X"
                                 />
-                                <div className="mt-4 flex flex-wrap items-center gap-3">
-                                        <button
-                                                onClick={onRun}
-                                                disabled={step !== "idle" && step !== "done" && step !== "error"}
-                                                className="ui-text text-sm px-5 py-2 rounded-md border border-white/25 bg-white/10 hover:bg-white/15 transition disabled:opacity-60"
-                                        >
-                                                {runLabel}
-                                        </button>
-                                        {!verifiedAll && <span className="ui-text text-xs text-red-400">Link all three providers first</span>}
-                                        {error && <span className="ui-text text-xs text-red-400">{error}</span>}
-                                        {step !== "idle" && step !== "done" && step !== "error" && (
-                                                <span className="ui-text text-xs text-white/60">Current step: {step}</span>
-                                        )}
-                                </div>
-                                {session && (
-                                        <div className="ui-text text-xs text-white/40 mt-3">
-                                                Session ID: <span className="text-white/65">{session.id}</span>
-                                        </div>
-                                )}
-                        </div>
+				<div className="mt-3 flex items-center gap-3">
+					<button
+						onClick={onRun}
+						disabled={step !== "idle" && step !== "done" && step !== "error"}
+						className="px-4 py-1.5 rounded-md border border-white/20 bg-white/10 hover:bg-white/15 ui-text text-sm disabled:opacity-60"
+					>
+                                                {step === "creating"
+                                                        ? "Creating…"
+                                                        : step === "proposing"
+                                                                ? "Gathering proposals…"
+                                                                : step === "done"
+                                                                        ? "Run Again"
+                                                                        : "Run MAGI"}
+					</button>
+					{!verifiedAll && <span className="ui-text text-xs text-red-400">Link all three providers first</span>}
+					{error && <span className="ui-text text-xs text-red-400">{error}</span>}
+				</div>
+			</div>
 
-                        {/* Live per-agent activity */}
-                        {agents.length > 0 && (
-                                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-                                        {agents.map((a) => {
+			{/* Live per-agent activity */}
+			{agents.length > 0 && (
+				<div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+					{agents.map((a) => {
                                                 const proposal = firstProposalByAgent[a.id];
                                                 const status =
                                                         step === "proposing" && !proposal
@@ -471,85 +350,7 @@ export default function MagiConsensusControl() {
                                                 );
                                         })}
                                 </div>
-                        )}
-
-                        {critiques.length > 0 && (
-                                <div className="magi-panel border-white/15 p-5 mt-6">
-                                        <div className="flex items-center justify-between">
-                                                <h3 className="title-text text-sm font-bold text-white/85 uppercase tracking-[0.3em]">Critiques</h3>
-                                                <span className="ui-text text-xs text-white/50">{critiques.length} entries</span>
-                                        </div>
-                                        <div className="mt-4 space-y-3">
-                                                {critiques.map((crit) => (
-                                                        <div key={crit.id} className="bg-white/5 border border-white/10 rounded p-3">
-                                                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                                                        <span className="title-text text-xs uppercase tracking-[0.25em] text-white/70">
-                                                                                {agentById[crit.agent_id ?? ""]?.name || "Unknown Agent"}
-                                                                        </span>
-                                                                        <span className="ui-text text-[11px] text-white/40">#{crit.id}</span>
-                                                                </div>
-                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{crit.content}</div>
-                                                        </div>
-                                                ))}
-                                        </div>
-                                </div>
-                        )}
-
-                        {votes.length > 0 && (
-                                <div className="magi-panel border-white/15 p-5 mt-6">
-                                        <div className="flex items-center justify-between">
-                                                <h3 className="title-text text-sm font-bold text-white/85 uppercase tracking-[0.3em]">Voting Summary</h3>
-                                                <span className="ui-text text-xs text-white/50">{votes.length} votes cast</span>
-                                        </div>
-                                        <div className="mt-4 space-y-4">
-                                                {voteBreakdown.map((entry) => {
-                                                        const proposal = proposalById[entry.targetId];
-                                                        return (
-                                                                <div key={entry.targetId} className="bg-white/5 border border-white/10 rounded p-3">
-                                                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                                                                <div className="title-text text-sm font-semibold text-white/85">
-                                                                                        Proposal #{entry.targetId}
-                                                                                </div>
-                                                                                <div className="ui-text text-sm text-magiGreen">
-                                                                                        Total score: {entry.total}
-                                                                                </div>
-                                                                        </div>
-                                                                        {proposal && (
-                                                                                <div className="ui-text text-xs text-white/60 mt-1 whitespace-pre-wrap">
-                                                                                        {proposal.content}
-                                                                                </div>
-                                                                        )}
-                                                                        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-                                                                                {entry.votes.map((vote) => (
-                                                                                        <div key={vote.id} className="bg-black/20 border border-white/10 rounded p-2">
-                                                                                                <div className="title-text text-xs uppercase tracking-[0.25em] text-white/70">
-                                                                                                        {agentById[vote.agent_id]?.name || "Agent"}
-                                                                                                </div>
-                                                                                                <div className="ui-text text-sm text-white/85 mt-1">Score: {vote.score}</div>
-                                                                                                {vote.rationale && (
-                                                                                                        <div className="ui-text text-xs text-white/60 mt-2 whitespace-pre-wrap">
-                                                                                                                {vote.rationale}
-                                                                                                        </div>
-                                                                                                )}
-                                                                                        </div>
-                                                                                ))}
-                                                                        </div>
-                                                                </div>
-                                                        );
-                                                })}
-                                        </div>
-                                </div>
-                        )}
-
-                        {consensusMessage && (
-                                <div className="magi-panel border-white/15 p-6 mt-6">
-                                        <h3 className="title-text text-base font-bold text-white/90 uppercase tracking-[0.35em]">Consensus Output</h3>
-                                        {consensus?.summary && (
-                                                <p className="ui-text text-sm text-magiGreen mt-2">{consensus.summary}</p>
-                                        )}
-                                        <div className="ui-text text-base text-white/85 whitespace-pre-wrap mt-4">{consensusMessage.content}</div>
-                                </div>
-                        )}
+			)}
 
                         {debug && (
                                 <div className="ui-text text-xs text-white/50 mt-3">
