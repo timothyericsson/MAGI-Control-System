@@ -4,7 +4,7 @@ type Provider = MagiAgent["provider"];
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
 openai: "gpt-4o",
-anthropic: "claude-3-5-sonnet-20240620",
+anthropic: "claude-sonnet-4-5",
 grok: "grok-2-latest",
 };
 
@@ -26,8 +26,12 @@ export function canonicalModelFor(provider: Provider, requested?: string | null)
                         lowered === "claude-3.5-sonnet" ||
                         lowered === "claude-3-5-sonnet-latest" ||
                         lowered === "claude-3.5-sonnet-latest" ||
-                        lowered === "claude-3.5-sonnet-20240620"
+                        lowered === "claude-3.5-sonnet-20240620" ||
+                        lowered === "claude-sonnet-4-5" ||
+                        lowered === "claude-sonnet-4.5" ||
+                        lowered === "claude-sonnet-4-5-20250929"
                 ) {
+                        // Normalize legacy Anthropic Sonnet identifiers to the current default.
                         return DEFAULT_MODELS.anthropic;
                 }
                 // Allow any other explicit Claude identifier through unchanged.
