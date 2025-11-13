@@ -48,7 +48,6 @@ export default function MagiConsensusControl() {
         const [displayCritiques, setDisplayCritiques] = useState<MagiMessage[]>([]);
         const [displayConsensus, setDisplayConsensus] = useState<MagiMessage | null>(null);
         const [displayVotes, setDisplayVotes] = useState<MagiVote[]>([]);
-        const [diagnostics, setDiagnostics] = useState<MagiStepDiagnostics[]>([]);
 
 	const [verifiedAll, setVerifiedAll] = useState<boolean>(false);
 	useEffect(() => {
@@ -182,7 +181,6 @@ export default function MagiConsensusControl() {
                         const diagArray = Array.isArray(data.diagnostics)
                                 ? (data.diagnostics as MagiStepDiagnostics[])
                                 : [data.diagnostics as MagiStepDiagnostics];
-                        setDiagnostics((prev) => [...prev, ...diagArray]);
                         const last = diagArray[diagArray.length - 1];
                         setDebug(formatDiagnosticSummary(last));
                 } else {
@@ -208,7 +206,6 @@ export default function MagiConsensusControl() {
                 setDisplayCritiques([]);
                 setDisplayConsensus(null);
                 setDisplayVotes([]);
-                setDiagnostics([]);
                 setDebug(null);
                 setCurrentStage("idle");
                 if (!supabaseBrowser) {
@@ -335,28 +332,8 @@ export default function MagiConsensusControl() {
                 return typeof rawScore === "number" ? rawScore : null;
         }, [consensusMeta]);
         const votesSource = useMemo(() => {
-                if (displayVotes.length > 0) return displayVotes;
-                const latestVoteDiag = [...diagnostics].reverse().find((diag) => diag.step === "vote");
-                if (!latestVoteDiag) return [];
-                const syntheticCreatedAt = latestVoteDiag.timestamp;
-                const sessionId = session?.id ?? "";
-                return latestVoteDiag.agents.flatMap((agent) =>
-                        agent.votesCast.map((vote) => ({
-                                id: vote.id,
-                                session_id: sessionId,
-                                agent_id: agent.agentId,
-                                target_message_id: vote.targetMessageId,
-                                score:
-                                        typeof vote.score === "number"
-                                                ? vote.score
-                                                : typeof vote.score === "string"
-                                                        ? Number(vote.score) || 0
-                                                        : 0,
-                                rationale: vote.rationale,
-                                created_at: syntheticCreatedAt,
-                        }))
-                ) as MagiVote[];
-        }, [displayVotes, diagnostics, session?.id]);
+                return displayVotes;
+        }, [displayVotes]);
 
         const votes = useMemo(() => normalizeVoteScores(votesSource), [votesSource]);
 
@@ -493,14 +470,14 @@ export default function MagiConsensusControl() {
 
                         {/* Stage detail panels */}
                         <div className="mt-4 space-y-4">
-                                <div className="magi-panel border-white/15 p-4">
-                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                <details className="magi-panel border-white/15 p-4 group" data-step="proposals">
+                                        <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">
                                                 <div>
                                                         <h3 className="title-text text-base font-semibold text-white/90">Proposal Drafts</h3>
                                                         <p className="ui-text text-sm text-white/60">Individual outputs from each MAGI core.</p>
                                                 </div>
                                                 <span className="ui-text text-xs text-white/50">{sortedProposals.length} captured</span>
-                                        </div>
+                                        </summary>
                                         {agents.length > 0 ? (
                                                 <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                                                         {agents.map((a) => {
@@ -530,16 +507,16 @@ export default function MagiConsensusControl() {
                                         ) : (
                                                 <div className="ui-text text-sm text-white/50 mt-4">Awaiting agent telemetry.</div>
                                         )}
-                                </div>
+                                </details>
 
-                                <div className="magi-panel border-white/15 p-4">
-                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                <details className="magi-panel border-white/15 p-4 group" data-step="critiques">
+                                        <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">
                                                 <div>
                                                         <h3 className="title-text text-base font-semibold text-white/90">Cross-Critiques</h3>
                                                         <p className="ui-text text-sm text-white/60">Challenges and risk calls surfaced between agents.</p>
                                                 </div>
                                                 <span className="ui-text text-xs text-white/50">{sortedCritiques.length} logged</span>
-                                        </div>
+                                        </summary>
                                         <div className="mt-4 space-y-3">
                                                 {sortedCritiques.length > 0 ? (
                                                         sortedCritiques.map((critique) => {
@@ -570,16 +547,16 @@ export default function MagiConsensusControl() {
                                                         <div className="ui-text text-sm text-white/50">No critiques have been recorded yet.</div>
                                                 )}
                                         </div>
-                                </div>
+                                </details>
 
-                                <div className="magi-panel border-white/15 p-4">
-                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                <details className="magi-panel border-white/15 p-4 group" data-step="votes">
+                                        <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">
                                                 <div>
                                                         <h3 className="title-text text-base font-semibold text-white/90">Voting Ledger</h3>
                                                         <p className="ui-text text-sm text-white/60">Numerical scores assigned to each surviving plan.</p>
                                                 </div>
                                                 <span className="ui-text text-xs text-white/50">{sortedVotes.length} votes tallied</span>
-                                        </div>
+                                        </summary>
                                         <div className="mt-4 overflow-x-auto">
                                                 {sortedVotes.length > 0 ? (
                                                         <table className="min-w-full text-left">
@@ -614,20 +591,20 @@ export default function MagiConsensusControl() {
                                                         <div className="ui-text text-sm text-white/50">No votes have been submitted.</div>
                                                 )}
                                         </div>
-                                </div>
+                                </details>
 
-                                <div className="magi-panel border-white/15 p-4">
-                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                <details className="magi-panel border-white/15 p-4 group" data-step="consensus">
+                                        <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">
                                                 <div>
                                                         <h3 className="title-text text-base font-semibold text-white/90">Final Consensus</h3>
                                                         <p className="ui-text text-sm text-white/60">
                                                                 The selected plan surfaced by the MAGI cores.
                                                         </p>
                                                 </div>
-                                                {consensusMessage && (
-                                                        <span className="ui-text text-xs text-white/50">#{consensusMessage.id}</span>
-                                                )}
-                                        </div>
+                                                <span className="ui-text text-xs text-white/50">
+                                                        {consensusMessage ? `Ready · #${consensusMessage.id}` : "Awaiting resolution"}
+                                                </span>
+                                        </summary>
                                         {consensusMessage ? (
                                                 <div className="mt-4 bg-black/50 border border-white/10 rounded p-4">
                                                         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
@@ -657,138 +634,8 @@ export default function MagiConsensusControl() {
                                                         Consensus will appear here once the council finishes deliberating.
                                                 </div>
                                         )}
-                                </div>
+                                </details>
                         </div>
-
-                        {diagnostics.length > 0 && (
-                                <div className="magi-panel border-white/15 p-4 mt-4">
-                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-3">
-                                                <h3 className="title-text text-sm font-bold">Diagnostics</h3>
-                                                <span className="ui-text text-[11px] text-white/50">* indicates fallback or heuristic output</span>
-                                        </div>
-                                        <div className="space-y-3">
-                                                {diagnostics.map((diag, idx) => (
-                                                        <div key={`${diag.step}-${diag.timestamp}-${idx}`} className="bg-white/10 border border-white/10 rounded p-3">
-                                                                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-2">
-                                                                        <div>
-                                                                                <div className="title-text text-sm font-semibold capitalize">{diag.step}</div>
-                                                                                <div className="ui-text text-xs text-white/60">
-                                                                                        {new Date(diag.timestamp).toLocaleTimeString()}
-                                                                                </div>
-                                                                        </div>
-                                                                        <div className="ui-text text-xs text-white/60">
-                                                                                Proposals: {diag.totals.proposals} · Critiques: {diag.totals.critiques} · Votes: {diag.totals.votes} · Consensus: {diag.totals.consensus}
-                                                                        </div>
-                                                                </div>
-                                                                {(typeof diag.winningProposalId === "number" || typeof diag.consensusMessageId === "number") && (
-                                                                        <div className="ui-text text-xs text-magiGreen/70 mt-2">
-                                                                                {typeof diag.winningProposalId === "number" && (
-                                                                                        <span>
-                                                                                                Winning proposal #{diag.winningProposalId}
-                                                                                                {typeof diag.winningScore === "number" ? ` (score ${diag.winningScore})` : ""}
-                                                                                        </span>
-                                                                                )}
-                                                                                {typeof diag.consensusMessageId === "number" && (
-                                                                                        <span>
-                                                                                                {typeof diag.winningProposalId === "number" ? " · " : ""}
-                                                                                                Consensus message #{diag.consensusMessageId}
-                                                                                        </span>
-                                                                                )}
-                                                                        </div>
-                                                                )}
-                                                                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-                                                                        {diag.agents.map((agent) => (
-                                                                                <div key={`${diag.timestamp}-${agent.agentId}`} className="bg-black/20 border border-white/10 rounded p-2">
-                                                                                        <div className="title-text text-sm font-semibold">{agent.name}</div>
-                                                                                        <div className="ui-text text-xs text-white/50 uppercase tracking-wider">{agent.provider}</div>
-                                                                                        <div className="ui-text text-xs text-white/70 mt-2 space-y-1">
-                                                                                                <div>
-                                                                                                        <span className="text-white/60">Proposals:</span>{" "}
-                                                                                                        {agent.proposals.length > 0 ? (
-                                                                                                                <span className="inline-flex flex-wrap gap-1 align-top">
-                                                                                                                        {agent.proposals.map((p) => (
-                                                                                                                                <span key={p.id} className="px-1 py-0.5 rounded bg-white/10 border border-white/10" title={p.preview}>
-                                                                                                                                        #{p.id}
-                                                                                                                                        {p.fallback ? "*" : ""}
-                                                                                                                                </span>
-                                                                                                                        ))}
-                                                                                                                </span>
-                                                                                                        ) : (
-                                                                                                                "—"
-                                                                                                        )}
-                                                                                                </div>
-                                                                                                <div>
-                                                                                                        <span className="text-white/60">Critiques:</span>{" "}
-                                                                                                        {agent.critiquesAuthored.length > 0 ? (
-                                                                                                                <span className="inline-flex flex-wrap gap-1 align-top">
-                                                                                                                        {agent.critiquesAuthored.map((c) => (
-                                                                                                                                <span key={c.id} className="px-1 py-0.5 rounded bg-white/10 border border-white/10" title={c.preview}>
-                                                                                                                                        #{c.id}
-                                                                                                                                        {typeof c.targetMessageId === "number" ? `→#${c.targetMessageId}` : ""}
-                                                                                                                                        {c.fallback ? "*" : ""}
-                                                                                                                                </span>
-                                                                                                                        ))}
-                                                                                                                </span>
-                                                                                                        ) : (
-                                                                                                                "—"
-                                                                                                        )}
-                                                                                                </div>
-                                                                                                <div>
-                                                                                                        <span className="text-white/60">Received:</span>{" "}
-                                                                                                        {agent.critiquesReceived.length > 0 ? (
-                                                                                                                <span className="inline-flex flex-wrap gap-1 align-top">
-                                                                                                                        {agent.critiquesReceived.map((c) => (
-                                                                                                                                <span key={c.id} className="px-1 py-0.5 rounded bg-white/10 border border-white/10" title={c.preview}>
-                                                                                                                                        #{c.id}
-                                                                                                                                        {c.fallback ? "*" : ""}
-                                                                                                                                </span>
-                                                                                                                        ))}
-                                                                                                                </span>
-                                                                                                        ) : (
-                                                                                                                "—"
-                                                                                                        )}
-                                                                                                </div>
-                                                                                                <div>
-                                                                                                        <span className="text-white/60">Votes:</span>{" "}
-                                                                                                        {agent.votesCast.length > 0 ? (
-                                                                                                                <span className="inline-flex flex-wrap gap-1 align-top">
-                                                                                                                        {agent.votesCast.map((v) => {
-                                                                                                                                const score =
-                                                                                                                                        typeof v.score === "number"
-                                                                                                                                                ? v.score
-                                                                                                                                                : Number(v.score) || 0;
-                                                                                                                                return (
-                                                                                                                                        <span key={v.id} className="px-1 py-0.5 rounded bg-white/10 border border-white/10" title={v.rationale || undefined}>
-                                                                                                                                                #{v.targetMessageId}:{score}
-                                                                                                                                                {v.fallback ? "*" : ""}
-                                                                                                                                        </span>
-                                                                                                                                );
-                                                                                                                        })}
-                                                                                                                </span>
-                                                                                                        ) : (
-                                                                                                                "—"
-                                                                                                        )}
-                                                                                                </div>
-                                                                                                <div className={agent.fallbackCount ? "text-amber-300" : "text-white/50"}>Fallback triggers: {agent.fallbackCount}</div>
-                                                                                        </div>
-                                                                                </div>
-                                                                        ))}
-                                                                </div>
-                                                                {diag.events.length > 0 && (
-                                                                        <details className="mt-3">
-                                                                                <summary className="cursor-pointer ui-text text-xs text-white/60">Events ({diag.events.length})</summary>
-                                                                                <ul className="mt-2 space-y-1 ui-text text-xs text-white/70 list-disc list-inside">
-                                                                                        {diag.events.map((evt, evtIdx) => (
-                                                                                                <li key={`${diag.timestamp}-event-${evtIdx}`}>{evt}</li>
-                                                                                        ))}
-                                                                                </ul>
-                                                                        </details>
-                                                                )}
-                                                        </div>
-                                                ))}
-                                        </div>
-                                </div>
-                        )}
 
 		</section>
 	);
