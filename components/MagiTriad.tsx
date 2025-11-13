@@ -7,7 +7,13 @@ import clsx from "classnames";
 
 type Accent = "magiBlue" | "magiOrange" | "magiGreen";
 
-export default function MagiTriad() {
+type MagiTriadProps = {
+        onEnter?: () => void;
+        entering?: boolean;
+        enterLabel?: string;
+};
+
+export default function MagiTriad({ onEnter, entering = false, enterLabel }: MagiTriadProps) {
 	const nodes = useMemo(
 		() => [
 			{
@@ -74,8 +80,15 @@ export default function MagiTriad() {
 	}, [allOn]);
 
         const handleEnter = useCallback(() => {
-                window.open("/console", "_blank", "noopener,noreferrer");
-        }, []);
+                if (!allOn || entering) return;
+                if (onEnter) {
+                        onEnter();
+                } else {
+                        window.open("/console", "_blank", "noopener,noreferrer");
+                }
+        }, [allOn, entering, onEnter]);
+
+        const buttonLabel = entering ? "Initializing…" : enterLabel || "Enter MAGI";
 
         return (
                 <section className="relative w-full h-[600px] md:h-[680px] magi-triad">
@@ -191,9 +204,10 @@ export default function MagiTriad() {
                                                                         type="button"
                                                                         onClick={handleEnter}
                                                                         className="pointer-events-auto title-text tracking-[0.3em] uppercase text-xs md:text-sm px-6 py-3 rounded-md border border-white/40 bg-white/10 hover:bg-white/15 transition disabled:opacity-50"
-                                                                        disabled={!allOn}
+                                                                        disabled={!allOn || entering}
+                                                                        aria-busy={entering}
                                                                 >
-                                                                        Enter MAGI
+                                                                        {buttonLabel}
                                                                 </button>
                                                         </div>
                                                 </>
