@@ -314,6 +314,26 @@ export default function MagiConsensusControl() {
         const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
         const critiques = displayCritiques.length > 0 ? displayCritiques : messages.filter((m) => m.role === "agent_critique");
         const consensusMessage = displayConsensus ?? messages.find((m) => m.role === "consensus") ?? null;
+        const consensusMeta =
+                consensusMessage && typeof consensusMessage.meta === "object" && consensusMessage.meta
+                        ? (consensusMessage.meta as Record<string, unknown>)
+                        : null;
+        const consensusSourceProposalId = useMemo(() => {
+                if (!consensusMeta) return null;
+                const fromMessageId =
+                        (consensusMeta["fromMessageId"] as number | undefined | null) ??
+                        (consensusMeta["from_message_id"] as number | undefined | null) ??
+                        (consensusMeta["source_message_id"] as number | undefined | null);
+                return typeof fromMessageId === "number" ? fromMessageId : null;
+        }, [consensusMeta]);
+        const consensusScore = useMemo(() => {
+                if (!consensusMeta) return null;
+                const rawScore =
+                        (consensusMeta["totalScore"] as number | undefined | null) ??
+                        (consensusMeta["total_score"] as number | undefined | null) ??
+                        (consensusMeta["score"] as number | undefined | null);
+                return typeof rawScore === "number" ? rawScore : null;
+        }, [consensusMeta]);
         const votesSource = useMemo(() => {
                 if (displayVotes.length > 0) return displayVotes;
                 const latestVoteDiag = [...diagnostics].reverse().find((diag) => diag.step === "vote");
@@ -597,15 +617,48 @@ export default function MagiConsensusControl() {
                                 </div>
 
                                 <div className="magi-panel border-white/15 p-4">
-                                        <h3 className="title-text text-base font-semibold text-white/90">Final Consensus</h3>
+                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                                <div>
+                                                        <h3 className="title-text text-base font-semibold text-white/90">Final Consensus</h3>
+                                                        <p className="ui-text text-sm text-white/60">
+                                                                The selected plan surfaced by the MAGI cores.
+                                                        </p>
+                                                </div>
+                                                {consensusMessage && (
+                                                        <span className="ui-text text-xs text-white/50">#{consensusMessage.id}</span>
+                                                )}
+                                        </div>
+                                        {consensusMessage ? (
+                                                <div className="mt-4 bg-black/50 border border-white/10 rounded p-4">
+                                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                                                <div className="ui-text text-sm text-white/70">
+                                                                        Derived from
+                                                                        {" "}
+                                                                        {consensusSourceProposalId ? (
+                                                                                <span className="text-white">
+                                                                                        proposal #{consensusSourceProposalId}
+                                                                                </span>
+                                                                        ) : (
+                                                                                <span className="text-white">the top-scoring proposal</span>
+                                                                        )}
+                                                                </div>
+                                                                {typeof consensusScore === "number" && (
+                                                                        <div className="ui-text text-xs text-white/60">
+                                                                                Total score: <span className="text-white/80">{consensusScore}</span>
+                                                                        </div>
+                                                                )}
+                                                        </div>
+                                                        <div className="ui-text text-sm text-white/90 whitespace-pre-wrap mt-3">
+                                                                {consensusMessage.content}
+                                                        </div>
+                                                </div>
+                                        ) : (
+                                                <div className="ui-text text-sm text-white/50 mt-4">
+                                                        Consensus will appear here once the council finishes deliberating.
+                                                </div>
+                                        )}
                                 </div>
                         </div>
-
-                        {debug && (
-                                <div className="ui-text text-xs text-white/50 mt-3">
-                                        {debug}
-                                </div>
-                        )}
 
                         {diagnostics.length > 0 && (
                                 <div className="magi-panel border-white/15 p-4 mt-4">
