@@ -361,72 +361,47 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                 if (step === "propose") {
                         const stageEvents: string[] = [];
                         const userQuestion = full.messages.find((m) => m.role === "user")?.content ?? "";
-                        await Promise.all(
-                                agents.map(async (a) => {
-                                        let content = "";
-                                        let fallbackUsed = false;
-                                        let chatResult: AgentChatResult | null = null;
-                                        try {
-                                                chatResult = await agentChat(a, keys, [
-                                                        { role: "system", content: `You are ${a.name}. Provide a concise, helpful answer. Keep it under 120 words.` },
-                                                        { role: "user", content: userQuestion },
-                                                ]);
-                                                content = chatResult.content;
-                                                if (!content) {
-                                                        fallbackUsed = true;
-                                                        stageEvents.push(`[${a.name}] proposal empty response; using fallback text.`);
-                                                        content = `[${a.name}] Proposal for: ${userQuestion}`;
-                                                }
-                                        } catch (err: any) {
-                                                fallbackUsed = true;
-                                                stageEvents.push(`[${a.name}] proposal fallback: ${err?.message || "unknown error"}`);
-                                                content = `[${a.name}] Proposal for: ${userQuestion}`;
-                                        }
-                                        const actualProvider = chatResult?.providerUsed ?? a.provider;
-                                        const meta: Record<string, unknown> = {
-                                                provider: a.provider,
-                                                stage: "proposal",
-                                                fallback: fallbackUsed,
-                                                actualProvider,
-                                        };
-                                        const message = await addMessage({
-                                                sessionId,
-                                                role: "agent_proposal",
-                                                agentId: a.id,
-                                                content,
-                                                model: a.model ?? null,
-                                                meta,
-                                        });
-                                        stageEvents.push(
-                                                `[${a.name}] proposal stored as #${message.id} via ${actualProvider}${fallbackUsed ? " (fallback)" : ""}`
-                                        );
-                                })
-                        );
-                        let refreshedState = await getSessionFull(sessionId);
-                        let proposals = refreshedState.messages.filter((m) => m.role === "agent_proposal");
-                        if (proposals.length === 0) {
-                                stageEvents.push("No proposals generated from agents; inserting synthetic fallbacks.");
-                                const generic = [
-                                        { name: "CASPER", content: `[CASPER] Proposal for: ${userQuestion}` },
-                                        { name: "BALTHASAR", content: `[BALTHASAR] Proposal for: ${userQuestion}` },
-                                        { name: "MELCHIOR", content: `[MELCHIOR] Proposal for: ${userQuestion}` },
-                                ];
-                                await Promise.all(
-                                        generic.map(async (g) => {
-                                                const message = await addMessage({
-                                                        sessionId,
-                                                        role: "agent_proposal",
-                                                        agentId: null,
-                                                        content: g.content,
-                                                        model: null,
-                                                        meta: { provider: "synthetic", stage: "proposal", fallback: true },
-                                                });
-                                                stageEvents.push(`[synthetic] ${g.name} proposal stored as #${message.id} (fallback)`);
-                                        })
-                                );
-                                refreshedState = await getSessionFull(sessionId);
-                                proposals = refreshedState.messages.filter((m) => m.role === "agent_proposal");
+                        for (const a of agents) {
+                                let chatResult: AgentChatResult | null = null;
+                                try {
+                                        chatResult = await agentChat(a, keys, [
+                                                { role: "system", content: `You are ${a.name}. Provide a concise, helpful answer. Keep it under 120 words.` },
+                                                { role: "user", content: userQuestion },
+                                        ]);
+                                } catch (err: any) {
+                                        const message = err?.message || "unknown error";
+                                        stageEvents.push(`[${a.name}] proposal failed: ${message}`);
+                                        await setSessionStatus(sessionId, "error", `${a.name} proposal failed`);
+                                        throw new Error(`${a.name} proposal failed: ${message}`);
+                                }
+
+                                const actualProvider = chatResult?.providerUsed ?? a.provider;
+                                const content = chatResult?.content?.trim() ?? "";
+
+                                if (!content) {
+                                        stageEvents.push(`[${a.name}] proposal failed: empty response`);
+                                        await setSessionStatus(sessionId, "error", `${a.name} proposal returned empty response`);
+                                        throw new Error(`${a.name} proposal returned empty response`);
+                                }
+
+                                const meta: Record<string, unknown> = {
+                                        provider: a.provider,
+                                        stage: "proposal",
+                                        fallback: false,
+                                        actualProvider,
+                                };
+                                const message = await addMessage({
+                                        sessionId,
+                                        role: "agent_proposal",
+                                        agentId: a.id,
+                                        content,
+                                        model: a.model ?? null,
+                                        meta,
+                                });
+                                stageEvents.push(`[${a.name}] proposal stored as #${message.id} via ${actualProvider}`);
                         }
+                        const refreshedState = await getSessionFull(sessionId);
+                        const proposals = refreshedState.messages.filter((m) => m.role === "agent_proposal");
                         stageEvents.push(`Total proposals recorded: ${proposals.length}`);
                         const diagnostics = buildDiagnostics({
                                 step: "propose",
