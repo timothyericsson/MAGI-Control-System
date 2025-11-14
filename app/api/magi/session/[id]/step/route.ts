@@ -234,6 +234,9 @@ async function callOpenAIChat(
         messages: { role: string; content: string }[],
         userLabel?: string
 ): Promise<string> {
+        if (!model) {
+                throw new Error("openai model not specified");
+        }
         const res = await fetch("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
                 headers: {
@@ -241,7 +244,7 @@ async function callOpenAIChat(
                         "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                        model: model || "gpt-4o-mini",
+                        model,
                         messages,
                         temperature: 0.3,
                         ...(userLabel ? { user: userLabel } : {}),
@@ -260,14 +263,17 @@ async function callXAIChat(
         userLabel?: string
 ): Promise<string> {
         // xAI is OpenAI-compatible for chat completions
+        if (!model) {
+                throw new Error("xai model not specified");
+        }
         const res = await fetch("https://api.x.ai/v1/chat/completions", {
                 method: "POST",
                 headers: {
                         "Authorization": `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		},
+                        "Content-Type": "application/json",
+                },
                 body: JSON.stringify({
-                        model: model || "grok-2-mini",
+                        model,
                         messages,
                         temperature: 0.3,
                         ...(userLabel ? { user: userLabel } : {}),
@@ -286,6 +292,9 @@ async function callAnthropic(
         userLabel?: string
 ): Promise<string> {
         const resolvedModel = canonicalModelFor("anthropic", model);
+        if (!resolvedModel) {
+                throw new Error("anthropic model not specified");
+        }
         // Convert to Anthropic messages API format
         const sys = messages.find((m) => m.role === "system")?.content;
         const userTurns = messages.filter((m) => m.role !== "system").map((m) => ({
@@ -300,7 +309,7 @@ async function callAnthropic(
                         "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                        model: resolvedModel || DEFAULT_MODELS.anthropic,
+                        model: resolvedModel,
                         max_tokens: 400,
                         system: sys,
                         messages: userTurns,
@@ -314,9 +323,6 @@ async function callAnthropic(
                         detail = await res.text();
                 } catch {
                         detail = "";
-                }
-                if (res.status === 404 && resolvedModel !== DEFAULT_MODELS.anthropic) {
-                        return callAnthropic(apiKey, DEFAULT_MODELS.anthropic, messages, userLabel);
                 }
                 const trimmedDetail = detail.trim();
                 throw new Error(`anthropic error ${res.status}${trimmedDetail ? `: ${trimmedDetail}` : ""}`);

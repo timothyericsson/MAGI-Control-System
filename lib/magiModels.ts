@@ -3,9 +3,9 @@ import type { MagiAgent } from "@/lib/magiTypes";
 type Provider = MagiAgent["provider"];
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
-openai: "gpt-4o",
+openai: "gpt-5.1",
 anthropic: "claude-sonnet-4-5",
-grok: "grok-2-latest",
+grok: "grok-4-fast-reasoning",
 };
 
 /**
@@ -16,39 +16,10 @@ grok: "grok-2-latest",
 export function canonicalModelFor(provider: Provider, requested?: string | null): string {
         const trimmed = (requested ?? "").trim();
 
-        if (provider === "anthropic") {
-                if (!trimmed) {
-                        return DEFAULT_MODELS.anthropic;
-                }
-                const lowered = trimmed.toLowerCase();
-                if (
-                        lowered === "claude-3-5-sonnet" ||
-                        lowered === "claude-3.5-sonnet" ||
-                        lowered === "claude-3-5-sonnet-latest" ||
-                        lowered === "claude-3.5-sonnet-latest" ||
-                        lowered === "claude-3.5-sonnet-20240620" ||
-                        lowered === "claude-sonnet-4-5" ||
-                        lowered === "claude-sonnet-4.5" ||
-                        lowered === "claude-sonnet-4-5-20250929"
-                ) {
-                        // Normalize legacy Anthropic Sonnet identifiers to the current default.
-                        return DEFAULT_MODELS.anthropic;
-                }
-                // Allow any other explicit Claude identifier through unchanged.
+        if (trimmed) {
                 return trimmed;
         }
 
-        if (provider === "grok") {
-                if (!trimmed) {
-                        return DEFAULT_MODELS.grok;
-                }
-                if (trimmed === "grok-2-mini" || trimmed === "grok-mini" || trimmed === "grok-2") {
-                        return DEFAULT_MODELS.grok;
-                }
-                return trimmed;
-        }
-
-        // OpenAI
-        return trimmed || DEFAULT_MODELS.openai;
+        return DEFAULT_MODELS[provider];
 }
 
