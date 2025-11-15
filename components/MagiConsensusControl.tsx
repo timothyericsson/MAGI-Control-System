@@ -74,6 +74,9 @@ export default function MagiConsensusControl() {
 		const [showHistory, setShowHistory] = useState(false);
 		const [sessions, setSessions] = useState<MagiSession[]>([]);
 		const [loadingSessions, setLoadingSessions] = useState(false);
+        const [showClearConfirm, setShowClearConfirm] = useState(false);
+        const [clearingHistory, setClearingHistory] = useState(false);
+        const [clearHistoryError, setClearHistoryError] = useState<string | null>(null);
 
         // History detail modal
         const [showHistoryDetail, setShowHistoryDetail] = useState(false);
@@ -140,6 +143,33 @@ export default function MagiConsensusControl() {
 			loadSessions();
 		}
 	}, [showHistory, loadSessions]);
+
+        const clearHistory = useCallback(async () => {
+                if (!supabaseBrowser) return;
+                setClearingHistory(true);
+                setClearHistoryError(null);
+                try {
+                        const { data: auth } = await supabaseBrowser.auth.getSession();
+                        const userId = auth.session?.user?.id;
+                        if (!userId) {
+                                throw new Error("You must be signed in.");
+                        }
+                        const res = await fetch(`/api/magi/sessions?userId=${encodeURIComponent(userId)}`, {
+                                method: "DELETE",
+                        });
+                        const json = await res.json();
+                        if (!json?.ok) {
+                                throw new Error(json?.error || "Failed to clear history");
+                        }
+                        setSessions([]);
+                        setShowClearConfirm(false);
+                        await loadSessions();
+                } catch (err: any) {
+                        setClearHistoryError(err?.message || "Failed to clear history");
+                } finally {
+                        setClearingHistory(false);
+                }
+        }, [loadSessions]);
 
 
         const getKeys = useCallback(() => {
@@ -903,16 +933,63 @@ export default function MagiConsensusControl() {
 				{/* Tucked-away History drawer inside the chat panel */}
 				{showHistory && (
 					<div className="absolute top-0 right-0 h-full w-72 bg-black/50 border-l border-white/15 p-3 overflow-y-auto no-scrollbar backdrop-blur-sm">
-						<div className="flex items-center justify-between mb-2">
+						<div className="flex items-center justify-between mb-2 gap-2">
 							<div className="title-text text-sm font-semibold text-white/80">Past Chats</div>
-							<button
-								onClick={() => setShowHistory(false)}
-								className="ui-text text-xs px-2 py-0.5 rounded border border-white/20 hover:bg-white/10"
-								title="Close"
-							>
-								Close
-							</button>
+							<div className="flex items-center gap-2">
+								{sessions.length > 0 && (
+									<button
+										onClick={() => {
+											setShowClearConfirm(true);
+											setClearHistoryError(null);
+										}}
+										className="ui-text text-xs px-2 py-0.5 rounded border border-white/20 hover:bg-white/10"
+										title="Clear all history"
+									>
+										Clear
+									</button>
+								)}
+								<button
+									onClick={() => {
+										setShowClearConfirm(false);
+										setClearHistoryError(null);
+										setShowHistory(false);
+									}}
+									className="ui-text text-xs px-2 py-0.5 rounded border border-white/20 hover:bg-white/10"
+									title="Close"
+								>
+									Close
+								</button>
+							</div>
 						</div>
+						{showClearConfirm && (
+							<div className="mb-3 rounded border border-red-400/40 bg-red-500/10 p-3">
+								<div className="ui-text text-sm text-white/80">
+									This will permanently delete all recorded MAGI chats for this account. Continue?
+								</div>
+								{clearHistoryError && (
+									<div className="ui-text text-xs text-red-300 mt-2">{clearHistoryError}</div>
+								)}
+								<div className="mt-3 flex items-center gap-2">
+									<button
+										onClick={clearHistory}
+										disabled={clearingHistory}
+										className="ui-text text-xs px-3 py-1 rounded border border-red-400 bg-red-500/20 hover:bg-red-500/30 disabled:opacity-60"
+									>
+										{clearingHistory ? "Clearing…" : "Yes, delete"}
+									</button>
+									<button
+										onClick={() => {
+											setShowClearConfirm(false);
+											setClearHistoryError(null);
+										}}
+										disabled={clearingHistory}
+										className="ui-text text-xs px-3 py-1 rounded border border-white/20 hover:bg-white/10 disabled:opacity-60"
+									>
+										Cancel
+									</button>
+								</div>
+							</div>
+						)}
 						{loadingSessions ? (
 							<div className="ui-text text-sm text-white/60">Loading…</div>
 						) : sessions.length === 0 ? (

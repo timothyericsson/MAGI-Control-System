@@ -60,4 +60,54 @@ export async function GET(req: NextRequest) {
 	}
 }
 
+export async function DELETE(req: NextRequest) {
+	try {
+		const { searchParams } = new URL(req.url);
+		const userId = (searchParams.get("userId") || "").trim();
+		if (!userId) {
+			return new Response(JSON.stringify({ ok: false, error: "Missing userId" }), { status: 400 });
+		}
+		const supabase = getSupabaseServer();
+		const { data: sessions, error } = await supabase
+			.from("magi_sessions")
+			.select("id")
+			.eq("user_id", userId);
+		if (error) {
+			return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
+		}
+		const ids = (sessions || []).map((s) => s.id);
+		if (ids.length === 0) {
+			return new Response(JSON.stringify({ ok: true, cleared: 0 }), {
+				status: 200,
+				headers: { "Cache-Control": "no-store" },
+			});
+		}
+
+		const tablesToClear = [
+			{ table: "magi_votes", column: "session_id" },
+			{ table: "magi_messages", column: "session_id" },
+			{ table: "magi_consensus", column: "session_id" },
+		];
+		for (const { table, column } of tablesToClear) {
+			const { error: deleteError } = await supabase.from(table).delete().in(column, ids);
+			if (deleteError) {
+				return new Response(JSON.stringify({ ok: false, error: deleteError.message }), { status: 500 });
+			}
+		}
+
+		const { error: sessionDeleteError } = await supabase.from("magi_sessions").delete().in("id", ids);
+		if (sessionDeleteError) {
+			return new Response(JSON.stringify({ ok: false, error: sessionDeleteError.message }), { status: 500 });
+		}
+
+		return new Response(JSON.stringify({ ok: true, cleared: ids.length }), {
+			status: 200,
+			headers: { "Cache-Control": "no-store" },
+		});
+	} catch (e: any) {
+		return new Response(JSON.stringify({ ok: false, error: e?.message || "Unexpected error" }), { status: 500 });
+	}
+}
+
+
 
