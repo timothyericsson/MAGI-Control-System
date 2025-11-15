@@ -3,7 +3,16 @@
 @tailwind utilities;
 
 :root {
-	--panel-radius: 10px;
+        --panel-radius: 10px;
+}
+
+body {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+}
+
+body::-webkit-scrollbar {
+        display: none;
 }
 
 .title-text {

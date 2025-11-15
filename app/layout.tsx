@@ -25,7 +25,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
 	return (
 		<html lang="en">
-			<body className={`${orbitron.variable} ${rajdhani.variable} bg-evaBg text-white min-h-screen overflow-hidden`}>
+                        <body
+                                className={`${orbitron.variable} ${rajdhani.variable} bg-evaBg text-white min-h-screen overflow-y-auto`}
+                        >
 				<div className="relative min-h-screen">
 					{/* Subtle EVA grid background */}
 					<div
