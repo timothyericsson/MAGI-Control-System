@@ -29,20 +29,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                 className={`${orbitron.variable} ${rajdhani.variable} bg-evaBg text-white min-h-screen overflow-y-auto`}
                         >
 				<div className="relative min-h-screen">
-					{/* Subtle EVA grid background */}
+					{/* Subtle EVA grid background (fixed so it does not move on expand/scroll) */}
 					<div
 						aria-hidden
-						className="pointer-events-none absolute inset-0"
+						className="pointer-events-none fixed inset-0"
 						style={{
 							backgroundImage:
 								"linear-gradient(to right, rgba(20,32,58,0.35) 1px, transparent 1px), linear-gradient(to bottom, rgba(20,32,58,0.35) 1px, transparent 1px)",
 							backgroundSize: "40px 40px",
 						}}
 					/>
-					{/* Optional background art overlay if provided by user in /public */}
+					{/* Optional background art overlay if provided by user in /public (fixed) */}
 					<div
 						aria-hidden
-						className="pointer-events-none absolute inset-0 opacity-[0.05] bg-center bg-cover"
+						className="pointer-events-none fixed inset-0 opacity-[0.05] bg-center bg-cover"
 						style={{ backgroundImage: "url(/magi_background.png)" }}
 					/>
 					<TopBar />

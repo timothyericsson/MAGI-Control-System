@@ -53,7 +53,7 @@ function votesEqual(a: MagiVote[], b: MagiVote[]): boolean {
         return true;
 }
 
-type Step = "idle" | "creating" | "proposing" | "critiquing" | "voting" | "finalizing" | "done" | "error";
+type Step = "idle" | "creating" | "proposing" | "voting" | "finalizing" | "done" | "error";
 
 export default function MagiConsensusControl() {
         const [question, setQuestion] = useState("");
@@ -67,9 +67,28 @@ export default function MagiConsensusControl() {
         const [debug, setDebug] = useState<string | null>(null);
         // Local display buffers to avoid UI depending on DB read latency
         const [displayProposals, setDisplayProposals] = useState<MagiMessage[]>([]);
-        const [displayCritiques, setDisplayCritiques] = useState<MagiMessage[]>([]);
+        // Critiques removed from workflow
         const [displayConsensus, setDisplayConsensus] = useState<MagiMessage | null>(null);
         const [displayVotes, setDisplayVotes] = useState<MagiVote[]>([]);
+		// Tucked-away history drawer state
+		const [showHistory, setShowHistory] = useState(false);
+		const [sessions, setSessions] = useState<MagiSession[]>([]);
+		const [loadingSessions, setLoadingSessions] = useState(false);
+
+        // History detail modal
+        const [showHistoryDetail, setShowHistoryDetail] = useState(false);
+        const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
+        const [historyDetail, setHistoryDetail] = useState<{
+                id: string;
+                createdAt: string;
+                question: string;
+                finalMessage: MagiMessage | null;
+                derived: boolean;
+        } | null>(null);
+
+        // Modal toggles for stage details
+        const [showProposalsModal, setShowProposalsModal] = useState(false);
+        const [showVotesModal, setShowVotesModal] = useState(false);
 
         const updateDisplayVotes = useCallback((incoming: MagiVote[] | null | undefined) => {
                 const normalized = normalizeVoteScores(incoming);
@@ -97,6 +116,31 @@ export default function MagiConsensusControl() {
 		const i = setInterval(compute, 1000);
 		return () => clearInterval(i);
 	}, []);
+
+	// Load user's sessions for the History drawer
+	const loadSessions = useCallback(async () => {
+		if (!supabaseBrowser) return;
+		const { data: auth } = await supabaseBrowser.auth.getSession();
+		const userId = auth.session?.user?.id;
+		if (!userId) return;
+		setLoadingSessions(true);
+		try {
+			const res = await fetch(`/api/magi/sessions?userId=${encodeURIComponent(userId)}`, { cache: "no-store" });
+			const json = await res.json();
+			if (json?.ok && Array.isArray(json.sessions)) {
+				setSessions(json.sessions as MagiSession[]);
+			}
+		} finally {
+			setLoadingSessions(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		if (showHistory) {
+			loadSessions();
+		}
+	}, [showHistory, loadSessions]);
+
 
         const getKeys = useCallback(() => {
                 return {
@@ -151,10 +195,8 @@ export default function MagiConsensusControl() {
                 updateDisplayVotes(data.votes as MagiVote[] | undefined);
 		// Update display buffers from fetched data if not already present
 		const fetchedProposals: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_proposal");
-		const fetchedCritiques: MagiMessage[] = (data.messages || []).filter((m: MagiMessage) => m.role === "agent_critique");
 		const fetchedFinal: MagiMessage | undefined = (data.messages || []).find((m: MagiMessage) => m.role === "consensus");
 		if (fetchedProposals.length > 0) setDisplayProposals(fetchedProposals);
-                if (fetchedCritiques.length > 0) setDisplayCritiques(fetchedCritiques);
                 if (fetchedFinal) setDisplayConsensus(fetchedFinal);
 	}, []);
 
@@ -163,6 +205,101 @@ export default function MagiConsensusControl() {
 		const data = await res.json();
 		return data;
 	}
+
+	const onSelectSession = useCallback(async (s: MagiSession) => {
+		await fetchFull(s.id);
+		setShowHistory(false);
+	}, [fetchFull]);
+
+        const openHistoryDetail = useCallback(async (s: MagiSession) => {
+                setHistoryDetailLoading(true);
+                setShowHistoryDetail(true);
+                try {
+                        async function resolveFinal(sessionId: string): Promise<{ question: string; finalMessage: MagiMessage | null; derived: boolean }> {
+                                const data = await fetchFullRaw(sessionId);
+                                if (!data?.ok) {
+                                        return { question: s.question, finalMessage: null, derived: false };
+                                }
+                                const msgs: MagiMessage[] = Array.isArray(data.messages) ? (data.messages as MagiMessage[]) : [];
+                                const votes: MagiVote[] = Array.isArray(data.votes) ? (data.votes as MagiVote[]) : [];
+                                const question: string = data.session?.question ?? s.question;
+                                const consensusRow = data.consensus || null;
+                                let finalId: number | null = null;
+                                if (consensusRow) {
+                                        const rawA = (consensusRow as any).final_message_id;
+                                        const rawB = (consensusRow as any).finalMessageId;
+                                        const rawC = (consensusRow as any).finalMessageID;
+                                        const candidate = typeof rawA !== "undefined" ? rawA : typeof rawB !== "undefined" ? rawB : rawC;
+                                        if (typeof candidate === "number" && Number.isFinite(candidate)) {
+                                                finalId = candidate;
+                                        } else if (typeof candidate === "string") {
+                                                const parsed = Number.parseInt(candidate, 10);
+                                                if (Number.isFinite(parsed)) finalId = parsed;
+                                        }
+                                }
+                                let finalMsg: MagiMessage | null = null;
+                                if (finalId) {
+                                        finalMsg = msgs.find((m) => m.id === finalId) || null;
+                                }
+                                if (!finalMsg) {
+                                        // Fallback to the latest consensus message if multiple
+                                        const consensusMsgs = msgs.filter((m) => m.role === "consensus");
+                                        finalMsg =
+                                                consensusMsgs.length > 0
+                                                        ? consensusMsgs[consensusMsgs.length - 1] // latest by created order
+                                                        : null;
+                                }
+                                if (!finalMsg) {
+                                        const proposals = msgs.filter((m) => m.role === "agent_proposal");
+                                        if (proposals.length > 0) {
+                                                const totals = new Map<number, number>();
+                                                for (const v of votes) {
+                                                        totals.set(v.target_message_id, (totals.get(v.target_message_id) || 0) + v.score);
+                                                }
+                                                let best: MagiMessage | null = null;
+                                                let bestScore = -Infinity;
+                                                for (const p of proposals) {
+                                                        const score = totals.get(p.id) ?? 0;
+                                                        if (!best || score > bestScore) {
+                                                                best = p;
+                                                                bestScore = score;
+                                                        }
+                                                }
+                                                if (best) {
+                                                        finalMsg = best;
+                                                        return { question, finalMessage: finalMsg, derived: true };
+                                                }
+                                        }
+                                }
+                                return { question, finalMessage: finalMsg, derived: false };
+                        }
+
+                        // First attempt
+                        let { question, finalMessage, derived } = await resolveFinal(s.id);
+
+                        // Retry loop to handle any replication lag or delayed writes
+                        if (!finalMessage) {
+                                for (let i = 0; i < 10; i++) {
+                                        await new Promise((r) => setTimeout(r, 300));
+                                        const next = await resolveFinal(s.id);
+                                        question = next.question;
+                                        finalMessage = next.finalMessage;
+                                        derived = next.derived;
+                                        if (finalMessage) break;
+                                }
+                        }
+
+                        setHistoryDetail({
+                                id: s.id,
+                                createdAt: s.created_at,
+                                question,
+                                finalMessage,
+                                derived,
+                        });
+                } finally {
+                        setHistoryDetailLoading(false);
+                }
+        }, []);
 
 	async function waitFor(sessionId: string, predicate: (payload: any) => boolean, label: string, timeoutMs = 15000, intervalMs = 300) {
 		const start = Date.now();
@@ -188,7 +325,7 @@ export default function MagiConsensusControl() {
 		return false;
 	}
 
-        const runStep = useCallback(async (sessionId: string, s: "propose" | "critique" | "vote" | "consensus") => {
+        const runStep = useCallback(async (sessionId: string, s: "propose" | "vote" | "consensus") => {
                 const keys = getKeys();
                 const res = await fetch(`/api/magi/session/${sessionId}/step`, {
                         method: "POST",
@@ -204,10 +341,7 @@ export default function MagiConsensusControl() {
                                 next = next.concat(data.proposals as MagiMessage[]);
                                 setDisplayProposals(data.proposals as MagiMessage[]);
                         }
-                        if (Array.isArray(data.critiques)) {
-                                next = next.concat(data.critiques as MagiMessage[]);
-                                setDisplayCritiques(data.critiques as MagiMessage[]);
-                        }
+                        // Critiques removed
                         if (data.finalMessage) {
                                 next = next.concat([data.finalMessage as MagiMessage]);
                                 setDisplayConsensus(data.finalMessage as MagiMessage);
@@ -223,7 +357,7 @@ export default function MagiConsensusControl() {
                         setDebug(formatDiagnosticSummary(last));
                 } else {
                         setDebug(
-                                `step=${s} proposals=${Array.isArray(data.proposals) ? data.proposals.length : 0} critiques=${Array.isArray(data.critiques) ? data.critiques.length : 0} votes=${Array.isArray(data.votes) ? data.votes.length : 0} final=${data.finalMessage ? 1 : 0}`
+                                `step=${s} proposals=${Array.isArray(data.proposals) ? data.proposals.length : 0} votes=${Array.isArray(data.votes) ? data.votes.length : 0} final=${data.finalMessage ? 1 : 0}`
                         );
                 }
                 // Always follow with a fresh pull in case there are additional rows (votes, etc.)
@@ -241,7 +375,6 @@ export default function MagiConsensusControl() {
                 setConsensus(null);
                 setAgents([]);
                 setDisplayProposals([]);
-                setDisplayCritiques([]);
                 setDisplayConsensus(null);
                 setDisplayVotes([]);
                 setDebug(null);
@@ -296,19 +429,6 @@ export default function MagiConsensusControl() {
                                 if (!okProposals) return;
                         }
 
-                        setStep("critiquing");
-                        setCurrentStage("critiquing");
-                        const critiqueData = await runStep(sessionId, "critique");
-                        const returnedCritiques = Array.isArray(critiqueData?.critiques) ? critiqueData.critiques.length : 0;
-                        if (returnedCritiques === 0) {
-                                const okCritiques = await waitFor(
-                                        sessionId,
-                                        (d) => Array.isArray(d?.messages) && d.messages.some((m: any) => m.role === "agent_critique"),
-                                        "Critiques"
-                                );
-                                if (!okCritiques) return;
-                        }
-
                         setStep("voting");
                         setCurrentStage("voting");
                         const voteData = await runStep(sessionId, "vote");
@@ -347,7 +467,6 @@ export default function MagiConsensusControl() {
         }, [question, verifiedAll, fetchFull, runStep, getKeys]);
 
         const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
-        const critiques = displayCritiques.length > 0 ? displayCritiques : messages.filter((m) => m.role === "agent_critique");
         const consensusMessage = displayConsensus ?? messages.find((m) => m.role === "consensus") ?? null;
         const consensusMeta =
                 consensusMessage && typeof consensusMessage.meta === "object" && consensusMessage.meta
@@ -391,10 +510,10 @@ export default function MagiConsensusControl() {
                 return map;
         }, [messages]);
 
-        const stepOrder: Step[] = ["idle", "creating", "proposing", "critiquing", "voting", "finalizing", "done", "error"];
+        const stepOrder: Step[] = ["idle", "creating", "proposing", "voting", "finalizing", "done", "error"];
 
         const computeStageStatus = useCallback(
-                (stageKey: "proposing" | "critiquing" | "voting" | "finalizing") => {
+                (stageKey: "proposing" | "voting" | "finalizing") => {
                         if (step === "error") {
                                 const stageIndex = stepOrder.indexOf(stageKey);
                                 const progressIndex = stepOrder.indexOf(currentStage);
@@ -409,9 +528,8 @@ export default function MagiConsensusControl() {
                 [currentStage, step]
         );
 
-        const stageLabels: { key: "proposing" | "critiquing" | "voting" | "finalizing"; label: string; description: string }[] = [
+        const stageLabels: { key: "proposing" | "voting" | "finalizing"; label: string; description: string }[] = [
                 { key: "proposing", label: "Proposals", description: "Each MAGI core drafts an initial response." },
-                { key: "critiquing", label: "Critique", description: "Cores review peers and surface weaknesses." },
                 { key: "voting", label: "Voting", description: "Arguments are scored to select the strongest path." },
                 { key: "finalizing", label: "Consensus", description: "The council synthesizes a unified answer." },
         ];
@@ -429,10 +547,6 @@ export default function MagiConsensusControl() {
                 return proposals.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
         }, [proposals]);
 
-        const sortedCritiques = useMemo(() => {
-                return critiques.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-        }, [critiques]);
-
         const sortedVotes = useMemo(() => {
                 return votes.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
         }, [votes]);
@@ -443,7 +557,15 @@ export default function MagiConsensusControl() {
 				<h2 className="title-text text-lg font-bold text-white/90">MAGI Consensus</h2>
 				<p className="ui-text text-white/60 text-sm">Ask once. Three cores deliberate, then answer.</p>
 			</header>
-                        <div className="magi-panel border-white/15 p-4">
+                        <div className="magi-panel border-white/15 p-4 relative">
+				<button
+					type="button"
+					onClick={() => setShowHistory((v) => !v)}
+					className="absolute right-3 top-3 ui-text text-xs px-2 py-1 rounded border border-white/20 bg-white/10 hover:bg-white/15 transition"
+					title="View past chats"
+				>
+					History
+				</button>
                                 <label className="ui-text text-sm text-white/70 block mb-2">Question</label>
                                 <textarea
                                         value={question}
@@ -462,8 +584,6 @@ export default function MagiConsensusControl() {
                                                         ? "Creating…"
                                                         : step === "proposing"
                                                                 ? "Gathering proposals…"
-                                                                : step === "critiquing"
-                                                                        ? "Running critiques…"
                                                                         : step === "voting"
                                                                                 ? "Collecting votes…"
                                                                                 : step === "finalizing"
@@ -500,136 +620,259 @@ export default function MagiConsensusControl() {
                                                                         </span>
                                                                 </div>
                                                                 <p className="ui-text text-xs text-white/60 mt-2">{stage.description}</p>
+
+                                                                {/* Proposals quick summary + modal trigger */}
+                                                                {stage.key === "proposing" && (
+                                                                        <div className="mt-3">
+                                                                                <div className="flex items-center justify-between">
+                                                                                        <span className="ui-text text-[11px] text-white/50">{sortedProposals.length} captured</span>
+                                                                                        <button
+                                                                                                type="button"
+                                                                                                onClick={() => setShowProposalsModal(true)}
+                                                                                                className="ui-text text-[11px] px-2 py-0.5 rounded border border-white/15 bg-white/10 hover:bg-white/15"
+                                                                                        >
+                                                                                                View
+                                                                                        </button>
+                                                                                </div>
+                                                                        </div>
+                                                                )}
+
+                                                                {/* Voting quick summary + modal trigger */}
+                                                                {stage.key === "voting" && (
+                                                                        <div className="mt-3">
+                                                                                <div className="flex items-center justify-between">
+                                                                                        <span className="ui-text text-[11px] text-white/50">{sortedVotes.length} votes tallied</span>
+                                                                                        <button
+                                                                                                type="button"
+                                                                                                onClick={() => setShowVotesModal(true)}
+                                                                                                className="ui-text text-[11px] px-2 py-0.5 rounded border border-white/15 bg-white/10 hover:bg-white/15"
+                                                                                        >
+                                                                                                View
+                                                                                        </button>
+                                                                                </div>
+                                                                        </div>
+                                                                )}
                                                         </div>
                                                 );
                                         })}
                                 </div>
                         </div>
 
-                        {/* Stage detail panels */}
-                        <div className="mt-4 space-y-4">
-                                <details className="magi-panel border-white/15 p-4 group" data-step="proposals">
-                                        <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">
-                                                <div>
-                                                        <h3 className="title-text text-base font-semibold text-white/90">Proposal Drafts</h3>
-                                                        <p className="ui-text text-sm text-white/60">Individual outputs from each MAGI core.</p>
+                        {/* History detail modal */}
+                        {showHistoryDetail && (
+                                <div className="fixed inset-0 z-50">
+                                        <div className="absolute inset-0 bg-black/70" onClick={() => setShowHistoryDetail(false)} />
+                                        <div className="relative z-10 mx-auto my-8 w-[95vw] max-w-3xl bg-black border border-white/15 rounded-lg shadow-xl">
+                                                <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                                                        <div className="title-text text-base font-semibold text-white/90">Past Chat</div>
+                                                        <button
+                                                                onClick={() => setShowHistoryDetail(false)}
+                                                                className="ui-text text-xs px-2 py-0.5 rounded border border-white/20 hover:bg-white/10"
+                                                        >
+                                                                Close
+                                                        </button>
                                                 </div>
-                                                <span className="ui-text text-xs text-white/50">{sortedProposals.length} captured</span>
-                                        </summary>
-                                        {agents.length > 0 ? (
-                                                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-                                                        {agents.map((a) => {
-                                                                const agentProposals = sortedProposals.filter((p) => p.agent_id === a.id);
-                                                                return (
-                                                                        <div key={a.id} className="bg-white/10 border border-white/10 rounded p-3">
-                                                                                <div className="flex items-center justify-between">
-                                                                                        <div className="title-text text-sm font-semibold text-white/80">{a.name}</div>
-                                                                                        <span className="ui-text text-[11px] uppercase tracking-widest text-white/40">{a.provider}</span>
-                                                                                </div>
-                                                                                <div className="mt-3 space-y-3">
-                                                                                        {agentProposals.length > 0 ? (
-                                                                                                agentProposals.map((proposal) => (
-                                                                                                <div key={proposal.id} className="bg-black/50 border border-white/10 rounded p-3">
-                                                                                                                <div className="ui-text text-[11px] text-white/50">#{proposal.id}</div>
-                                                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{proposal.content}</div>
-                                                                                                        </div>
-                                                                                                ))
-                                                                                        ) : (
-                                                                                                <div className="ui-text text-sm text-white/50">No proposal recorded.</div>
-                                                                                        )}
+                                                <div className="p-4 max-h-[80vh] overflow-auto no-scrollbar">
+                                                        {historyDetailLoading ? (
+                                                                <div className="ui-text text-sm text-white/60">Loading…</div>
+                                                        ) : historyDetail ? (
+                                                                <div className="space-y-4">
+                                                                        <div className="ui-text text-[11px] text-white/50">
+                                                                                {new Date(historyDetail.createdAt).toLocaleString()}
+                                                                        </div>
+                                                                        <div className="bg-black border border-white/10 rounded p-3">
+                                                                                <div className="title-text text-sm font-semibold text-white/80">Initial Prompt</div>
+                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">
+                                                                                        {historyDetail.question || "—"}
                                                                                 </div>
                                                                         </div>
-                                                                );
-                                                        })}
-                                                </div>
-                                        ) : (
-                                                <div className="ui-text text-sm text-white/50 mt-4">Awaiting agent telemetry.</div>
-                                        )}
-                                </details>
-
-                                <details className="magi-panel border-white/15 p-4 group" data-step="critiques">
-                                        <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">
-                                                <div>
-                                                        <h3 className="title-text text-base font-semibold text-white/90">Cross-Critiques</h3>
-                                                        <p className="ui-text text-sm text-white/60">Challenges and risk calls surfaced between agents.</p>
-                                                </div>
-                                                <span className="ui-text text-xs text-white/50">{sortedCritiques.length} logged</span>
-                                        </summary>
-                                        <div className="mt-4 space-y-3">
-                                                {sortedCritiques.length > 0 ? (
-                                                        sortedCritiques.map((critique) => {
-                                                                const agent = critique.agent_id ? agentById[critique.agent_id] : undefined;
-                                                                const targetId =
-                                                                        (critique.meta?.target_message_id as number | undefined) ||
-                                                                        (critique.meta?.targetMessageId as number | undefined) ||
-                                                                        null;
-                                                                const targetProposal = targetId ? messageById[targetId] : undefined;
-                                                                return (
-                                                                        <div key={critique.id} className="bg-white/10 border border-white/10 rounded p-3">
-                                                                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-1">
-                                                                                        <div className="title-text text-sm font-semibold text-white/80">
-                                                                                                {agent ? agent.name : "Unknown agent"}
-                                                                                        </div>
-                                                                                        <div className="ui-text text-xs text-white/50">#{critique.id}</div>
-                                                                                </div>
-                                                                                {targetProposal && (
-                                                                                        <div className="ui-text text-[11px] text-white/50 mt-1">
-                                                                                                Targets proposal #{targetProposal.id} by {targetProposal.agent_id && agentById[targetProposal.agent_id]?.name}
-                                                                                        </div>
+                                                                        <div className="bg-black border border-white/10 rounded p-3">
+                                                                                <div className="title-text text-sm font-semibold text-white/80">Final Consensus</div>
+                                                                                {historyDetail.finalMessage ? (
+                                                                                        <>
+                                                                                                <div className="ui-text text-[11px] text-white/50">
+                                                                                                        #{historyDetail.finalMessage.id}
+                                                                                                        {historyDetail.derived && " · derived from top-scoring proposal"}
+                                                                                                </div>
+                                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">
+                                                                                                        {historyDetail.finalMessage.content}
+                                                                                                </div>
+                                                                                        </>
+                                                                                ) : (
+                                                                                        <div className="ui-text text-sm text-white/60 mt-2">No consensus message recorded.</div>
                                                                                 )}
-                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{critique.content}</div>
                                                                         </div>
-                                                                );
-                                                        })
-                                                ) : (
-                                                        <div className="ui-text text-sm text-white/50">No critiques have been recorded yet.</div>
-                                                )}
-                                        </div>
-                                </details>
-
-                                <details className="magi-panel border-white/15 p-4 group" data-step="votes">
-                                        <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">
-                                                <div>
-                                                        <h3 className="title-text text-base font-semibold text-white/90">Voting Ledger</h3>
-                                                        <p className="ui-text text-sm text-white/60">Numerical scores assigned to each surviving plan.</p>
+                                                                </div>
+                                                        ) : (
+                                                                <div className="ui-text text-sm text-white/60">No data available.</div>
+                                                        )}
                                                 </div>
-                                                <span className="ui-text text-xs text-white/50">{sortedVotes.length} votes tallied</span>
-                                        </summary>
-                                        <div className="mt-4 overflow-x-auto">
-                                                {sortedVotes.length > 0 ? (
-                                                        <table className="min-w-full text-left">
-                                                                <thead>
-                                                                        <tr className="ui-text text-[11px] uppercase tracking-widest text-white/40">
-                                                                                <th className="py-2 pr-4 font-normal">Agent</th>
-                                                                                <th className="py-2 pr-4 font-normal">Target</th>
-                                                                                <th className="py-2 pr-4 font-normal">Score</th>
-                                                                                <th className="py-2 pr-4 font-normal">Rationale</th>
-                                                                        </tr>
-                                                                </thead>
-                                                                <tbody className="ui-text text-sm text-white/80">
-                                                                        {sortedVotes.map((vote) => {
-                                                                                const agent = agentById[vote.agent_id];
-                                                                                const target = messageById[vote.target_message_id];
+                                        </div>
+                                </div>
+                        )}
+
+                        {/* Modals for stage details */}
+                        {showProposalsModal && (
+                                <div className="fixed inset-0 z-50">
+                                        <div className="absolute inset-0 bg-black/70" onClick={() => setShowProposalsModal(false)} />
+                                        <div className="relative z-10 mx-auto my-8 w-[95vw] max-w-5xl bg-black border border-white/15 rounded-lg shadow-xl">
+                                                <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                                                        <div className="title-text text-base font-semibold text-white/90">Proposal Drafts</div>
+                                                        <button
+                                                                onClick={() => setShowProposalsModal(false)}
+                                                                className="ui-text text-xs px-2 py-0.5 rounded border border-white/20 hover:bg-white/10"
+                                                        >
+                                                                Close
+                                                        </button>
+                                                </div>
+                                                <div className="p-4 max-h-[80vh] overflow-auto no-scrollbar">
+                                                        {agents.length > 0 ? (
+                                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                                                        {agents.map((a) => {
+                                                                                const agentProposals = sortedProposals.filter((p) => p.agent_id === a.id);
                                                                                 return (
-                                                                                        <tr key={vote.id} className="border-t border-white/10">
-                                                                                                <td className="py-2 pr-4">{agent ? agent.name : vote.agent_id}</td>
-                                                                                                <td className="py-2 pr-4">
-                                                                                                        {target
-                                                                                                                ? `Proposal #${target.id} (${target.agent_id && agentById[target.agent_id]?.name})`
-                                                                                                                : `#${vote.target_message_id}`}
-                                                                                                </td>
-                                                                                                <td className="py-2 pr-4 font-semibold text-white">{vote.score}</td>
-                                                                                                <td className="py-2 pr-4 text-white/70 whitespace-pre-wrap">{vote.rationale || "—"}</td>
-                                                                                        </tr>
+                                                                                        <div key={a.id} className="bg-black border border-white/10 rounded p-3">
+                                                                                                <div className="flex items-center justify-between">
+                                                                                                        <div className="title-text text-sm font-semibold text-white/80">{a.name}</div>
+                                                                                                        <span className="ui-text text-[11px] uppercase tracking-widest text-white/40">{a.provider}</span>
+                                                                                                </div>
+                                                                                                <div className="mt-3 space-y-3">
+                                                                                                        {agentProposals.length > 0 ? (
+                                                                                                                agentProposals.map((proposal) => (
+                                                                                                                        <div key={proposal.id} className="bg-black border border-white/10 rounded p-3">
+                                                                                                                                <div className="ui-text text-[11px] text-white/50">#{proposal.id}</div>
+                                                                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{proposal.content}</div>
+                                                                                                                        </div>
+                                                                                                                ))
+                                                                                                        ) : (
+                                                                                                                <div className="ui-text text-sm text-white/50">No proposal recorded.</div>
+                                                                                                        )}
+                                                                                                </div>
+                                                                                        </div>
                                                                                 );
                                                                         })}
-                                                                </tbody>
-                                                        </table>
-                                                ) : (
-                                                        <div className="ui-text text-sm text-white/50">No votes have been submitted.</div>
-                                                )}
+                                                                </div>
+                                                        ) : (
+                                                                <div className="ui-text text-sm text-white/50 mt-2">Awaiting agent telemetry.</div>
+                                                        )}
+                                                </div>
                                         </div>
-                                </details>
+                                </div>
+                        )}
+
+                        {showVotesModal && (
+                                <div className="fixed inset-0 z-50">
+                                        <div className="absolute inset-0 bg-black/70" onClick={() => setShowVotesModal(false)} />
+                                        <div className="relative z-10 mx-auto my-8 w-[95vw] max-w-5xl bg-black border border-white/15 rounded-lg shadow-xl">
+                                                <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                                                        <div className="title-text text-base font-semibold text-white/90">Voting Ledger</div>
+                                                        <button
+                                                                onClick={() => setShowVotesModal(false)}
+                                                                className="ui-text text-xs px-2 py-0.5 rounded border border-white/20 hover:bg-white/10"
+                                                        >
+                                                                Close
+                                                        </button>
+                                                </div>
+                                                <div className="p-4 overflow-x-auto max-h-[80vh] overflow-y-auto no-scrollbar">
+                                                        {sortedVotes.length > 0 ? (
+                                                                <table className="min-w-full text-left">
+                                                                        <thead>
+                                                                                <tr className="ui-text text-[11px] uppercase tracking-widest text-white/40">
+                                                                                        <th className="py-2 pr-4 font-normal">Agent</th>
+                                                                                        <th className="py-2 pr-4 font-normal">Target</th>
+                                                                                        <th className="py-2 pr-4 font-normal">Score</th>
+                                                                                        <th className="py-2 pr-4 font-normal">Rationale</th>
+                                                                                </tr>
+                                                                        </thead>
+                                                                        <tbody className="ui-text text-sm text-white/80">
+                                                                                {sortedVotes.map((vote) => {
+                                                                                        const agent = agentById[vote.agent_id];
+                                                                                        const target = messageById[vote.target_message_id];
+                                                                                        return (
+                                                                                                <tr key={vote.id} className="border-t border-white/10 align-top">
+                                                                                                        <td className="py-2 pr-4">{agent ? agent.name : vote.agent_id}</td>
+                                                                                                                                <td className="py-2 pr-4">
+                                                                                                                                        {target ? (
+                                                                                                                                                <div className="group relative inline-block">
+                                                                                                                                                        <span className="cursor-help hover:underline">
+                                                                                                                                                                Proposal #{target.id}
+                                                                                                                                                                {target.agent_id && agentById[target.agent_id]?.name
+                                                                                                                                                                        ? ` (${agentById[target.agent_id]?.name})`
+                                                                                                                                                                        : ""}
+                                                                                                                                                        </span>
+                                                                                                                                                        {/* Hover preview popover */}
+                                                                                                                                                        <div className="absolute left-0 top-full mt-1 w-[28rem] max-w-[80vw] bg-black border border-white/20 rounded p-2 shadow-xl z-50 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                                                                                                                                                <div className="ui-text text-[11px] text-white/50 mb-1">Proposal #{target.id}</div>
+                                                                                                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap max-h-48 overflow-auto no-scrollbar">
+                                                                                                                                                                        {target.content}
+                                                                                                                                                                </div>
+                                                                                                                                                        </div>
+                                                                                                                                                </div>
+                                                                                                                                        ) : (
+                                                                                                                                                `#${vote.target_message_id}`
+                                                                                                                                        )}
+                                                                                                                                </td>
+                                                                                                        <td className="py-2 pr-4 font-semibold text-white">{vote.score}</td>
+                                                                                                        <td className="py-2 pr-4 text-white/70 whitespace-pre-wrap">{vote.rationale || "—"}</td>
+                                                                                                </tr>
+                                                                                        );
+                                                                                })}
+                                                                        </tbody>
+                                                                </table>
+                                                        ) : (
+                                                                <div className="ui-text text-sm text-white/50">No votes have been submitted.</div>
+                                                        )}
+                                                </div>
+                                        </div>
+                                </div>
+                        )}
+
+                        {/* Stage detail panels (Consensus remains as a panel) */}
+                        <div className="mt-4 space-y-4">
+
+				{/* Tucked-away History drawer inside the chat panel */}
+				{showHistory && (
+					<div className="absolute top-0 right-0 h-full w-72 bg-black/50 border-l border-white/15 p-3 overflow-y-auto no-scrollbar backdrop-blur-sm">
+						<div className="flex items-center justify-between mb-2">
+							<div className="title-text text-sm font-semibold text-white/80">Past Chats</div>
+							<button
+								onClick={() => setShowHistory(false)}
+								className="ui-text text-xs px-2 py-0.5 rounded border border-white/20 hover:bg-white/10"
+								title="Close"
+							>
+								Close
+							</button>
+						</div>
+						{loadingSessions ? (
+							<div className="ui-text text-sm text-white/60">Loading…</div>
+						) : sessions.length === 0 ? (
+							<div className="ui-text text-sm text-white/60">No past chats yet.</div>
+						) : (
+							<ul className="space-y-2">
+								{sessions.map((s) => {
+									const created = new Date(s.created_at);
+									const when = created.toLocaleString();
+									return (
+										<li key={s.id}>
+											<button
+												onClick={() => openHistoryDetail(s)}
+												className="w-full text-left bg-white/10 hover:bg-white/15 border border-white/10 rounded p-2"
+											>
+												<div className="ui-text text-[11px] text-white/50 mb-1">{when}</div>
+												<div className="ui-text text-sm text-white/80 truncate">{s.question}</div>
+												<div className="ui-text text-[11px] mt-1 text-white/50">Status: {s.status}</div>
+											</button>
+										</li>
+									);
+								})}
+							</ul>
+						)}
+					</div>
+				)}
+
+                                {/* Critiques panel removed */}
+
+                                {/* Voting Ledger moved inline into the Voting stage card */}
 
                                 <details className="magi-panel border-white/15 p-4 group" data-step="consensus">
                                         <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">

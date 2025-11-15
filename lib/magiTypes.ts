@@ -62,7 +62,7 @@ export interface CreateSessionRequestBody {
         };
 }
 
-export type MagiWorkflowStep = "propose" | "critique" | "vote" | "consensus";
+export type MagiWorkflowStep = "propose" | "vote" | "consensus";
 
 export interface StepRequestBody {
         step: MagiWorkflowStep;

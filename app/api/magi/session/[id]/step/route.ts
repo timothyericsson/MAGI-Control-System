@@ -385,7 +385,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 		const { step } = body;
 		const keys = (body?.keys || {}) as ProviderKeyMap;
 
-		if (!["propose", "critique", "vote", "consensus"].includes(step)) {
+		if (!["propose", "vote", "consensus"].includes(step)) {
 			return new Response(JSON.stringify({ ok: false, error: "Invalid step" }), { status: 400 });
 		}
 
@@ -447,76 +447,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                 votes: refreshedState.votes,
                                 events: stageEvents,
                         });
-                        return new Response(JSON.stringify({ ok: true, next: "critique", proposals, diagnostics }), {
+                        return new Response(JSON.stringify({ ok: true, next: "vote", proposals, diagnostics }), {
                                 status: 200,
                                 headers: { "Cache-Control": "no-store" },
                         });
                 }
 
-                if (step === "critique") {
-                        const stageEvents: string[] = [];
-                        const proposals = full.messages.filter((m) => m.role === "agent_proposal");
-                        await Promise.all(
-                                agents.flatMap((critic) => {
-                                        return proposals
-                                                .filter((p) => p.agent_id !== critic.id)
-                                                .map(async (p) => {
-                                                        let critique = "";
-                                                        let fallbackUsed = false;
-                                                        let chatResult: AgentChatResult | null = null;
-                                                        const textForCritique = proposals.find((x) => x.id === p.id)?.content ?? "";
-                                                        try {
-                                                                chatResult = await agentChat(critic, keys, [
-                                                                        { role: "system", content: `You are ${critic.name}. Provide a brief, constructive critique (1-2 sentences).` },
-                                                                        { role: "user", content: `Critique this proposal:\n\n${textForCritique}` },
-                                                                ]);
-                                                                critique = chatResult.content;
-                                                                if (!critique) {
-                                                                        fallbackUsed = true;
-                                                                        stageEvents.push(`[${critic.name}] critique empty for proposal #${p.id}; using fallback text.`);
-                                                                        critique = `[${critic.name}] critique of message ${p.id}: consider evidence and clarify assumptions.`;
-                                                                }
-                                                        } catch (err: any) {
-                                                                fallbackUsed = true;
-                                                                stageEvents.push(`[${critic.name}] critique fallback for proposal #${p.id}: ${err?.message || "unknown error"}`);
-                                                                critique = `[${critic.name}] critique of message ${p.id}: consider evidence and clarify assumptions.`;
-                                                        }
-                                                        const actualProvider = chatResult?.providerUsed ?? critic.provider;
-                                                        const meta: Record<string, unknown> = {
-                                                                targetMessageId: p.id,
-                                                                stage: "critique",
-                                                                fallback: fallbackUsed,
-                                                                actualProvider,
-                                                        };
-                                                        const message = await addMessage({
-                                                                sessionId,
-                                                                role: "agent_critique",
-                                                                agentId: critic.id,
-                                                                content: critique,
-                                                                model: critic.model ?? null,
-                                                                meta,
-                                                        });
-                                                        stageEvents.push(
-                                                                `[${critic.name}] critique stored as #${message.id} targeting proposal #${p.id} via ${actualProvider}${fallbackUsed ? " (fallback)" : ""}`
-                                                        );
-                                                });
-                                })
-                        );
-                        const refreshed = await getSessionFull(sessionId);
-                        const critiques = refreshed.messages.filter((m) => m.role === "agent_critique");
-                        stageEvents.push(`Total critiques recorded: ${critiques.length}`);
-                        const diagnostics = buildDiagnostics({
-                                step: "critique",
-                                agents,
-                                messages: refreshed.messages,
-                                votes: refreshed.votes,
-                                events: stageEvents,
-                        });
-                        return new Response(JSON.stringify({ ok: true, next: "vote", critiques, diagnostics }), {
-                                status: 200,
-                                headers: { "Cache-Control": "no-store" },
-                        });
-                }
+                // Critique step removed: proceed directly from proposals to voting
 
                 if (step === "vote") {
                         const stageEvents: string[] = [];
@@ -534,7 +471,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                 let fallbackUsed = false;
                                                 try {
                                                         const chatResult = await agentChat(a, keys, [
-                                                                { role: "system", content: `You are ${a.name}. Evaluate the quality, clarity, and factuality of the proposal. Reply ONLY with a JSON object: {"score": 0-100, "reason": "short rationale"}.` },
+                                                                { role: "system", content: `You are ${a.name}. Evaluate the proposal's quality, clarity, factuality, risks, and tradeoffs. Provide a detailed rationale of at least 3 sentences, referencing specifics. Reply ONLY with a JSON object: {"score": 0-100, "reason": "detailed rationale"}.` },
                                                                 { role: "user", content: `Proposal:\n\n${p.content}\n\nScore it.` },
                                                         ]);
                                                         const parsed = parseVoteResponse(chatResult.content);
