@@ -8,44 +8,14 @@ import type {
         MagiSessionStatus,
         MagiVote,
 } from "@/lib/magiTypes";
-import { DEFAULT_MODELS, canonicalModelFor } from "@/lib/magiModels";
-
-const DEFAULT_AGENTS: Array<{
-        slug: MagiAgent["slug"];
-        name: string;
-        provider: MagiAgent["provider"];
-        model: string | null;
-        color: string | null;
-}> = [
-        { slug: "casper", name: "CASPER", provider: "openai", model: DEFAULT_MODELS.openai, color: "#38bdf8" },
-        { slug: "balthasar", name: "BALTHASAR", provider: "anthropic", model: DEFAULT_MODELS.anthropic, color: "#f472b6" },
-        { slug: "melchior", name: "MELCHIOR", provider: "grok", model: DEFAULT_MODELS.grok, color: "#facc15" },
-];
 
 export async function listAgents(): Promise<MagiAgent[]> {
         const supabase = getSupabaseServer();
         const { data, error } = await supabase.from("magi_agents").select("*").order("slug", { ascending: true });
         if (error) throw error;
-        const present = new Set((data || []).map((row: { slug: string }) => row.slug));
-        const missing = DEFAULT_AGENTS.filter((agent) => !present.has(agent.slug));
-        if (missing.length > 0) {
-                const { error: seedError } = await supabase
-                        .from("magi_agents")
-                        .upsert(missing, { onConflict: "slug" });
-                if (seedError) throw seedError;
-                const { data: refreshed, error: refreshError } = await supabase
-                        .from("magi_agents")
-                        .select("*")
-                        .order("slug", { ascending: true });
-                if (refreshError) throw refreshError;
-                return (refreshed || []).map((agent: any) => ({
-                        ...agent,
-                        model: canonicalModelFor(agent.provider, agent.model),
-                })) as unknown as MagiAgent[];
-        }
         return (data || []).map((agent: any) => ({
                 ...agent,
-                model: canonicalModelFor(agent.provider, agent.model),
+                model: typeof agent.model === "string" ? agent.model.trim() : agent.model,
         })) as unknown as MagiAgent[];
 }
 
