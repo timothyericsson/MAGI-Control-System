@@ -33,17 +33,17 @@ export default function TopBar() {
 		window.location.href = "/login";
 	}
 
-	return (
-		<div className="fixed right-4 top-4 z-50">
-			{!loading && isAuthed && (
-				<button
-					onClick={handleLogout}
-					className="ui-text px-4 py-1.5 rounded-md border border-white/20 bg-white/10 hover:bg-white/15 transition"
-					title="Sign out"
-				>
-					Log out
-				</button>
-			)}
+        return (
+                <div className="absolute left-4 bottom-4 z-50">
+                        {!loading && isAuthed && (
+                                <button
+                                        onClick={handleLogout}
+                                        className="ui-text px-3 py-1 text-sm rounded-md border border-white/20 bg-white/10 hover:bg-white/15 transition"
+                                        title="Sign out"
+                                >
+                                        Log out
+                                </button>
+                        )}
 		</div>
 	);
 }
