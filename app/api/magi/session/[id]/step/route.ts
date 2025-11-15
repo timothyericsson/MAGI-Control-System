@@ -9,7 +9,7 @@ import {
         setSessionStatus,
         upsertConsensus,
 } from "@/lib/magiRepo";
-import { DEFAULT_MODELS, canonicalModelFor } from "@/lib/magiModels";
+import { canonicalModelFor } from "@/lib/magiModels";
 import type {
         MagiAgent,
         MagiMessage,
@@ -292,9 +292,6 @@ async function callAnthropic(
         userLabel?: string
 ): Promise<string> {
         const resolvedModel = canonicalModelFor("anthropic", model);
-        if (!resolvedModel) {
-                throw new Error("anthropic model not specified");
-        }
         // Convert to Anthropic messages API format
         const sys = messages.find((m) => m.role === "system")?.content;
         const userTurns = messages.filter((m) => m.role !== "system").map((m) => ({
