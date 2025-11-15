@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseClient";
 import { safeLoad } from "@/lib/localStore";
 import type {
@@ -55,6 +55,28 @@ function votesEqual(a: MagiVote[], b: MagiVote[]): boolean {
 
 type Step = "idle" | "creating" | "proposing" | "voting" | "finalizing" | "done" | "error";
 
+type ArtifactState = {
+        id: string;
+        original_filename: string;
+        status: "uploaded" | "processing" | "ready" | "failed";
+        ready_at?: string | null;
+        updated_at?: string;
+        manifest?: Record<string, unknown> | null;
+};
+
+type ArtifactApiResponse = {
+        id: string;
+        original_filename: string;
+        status: ArtifactState["status"];
+        ready_at: string | null;
+        manifest?: Record<string, unknown> | null;
+        created_at: string;
+        updated_at: string;
+};
+
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_UPLOAD_MB = Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024));
+
 export default function MagiConsensusControl() {
         const [question, setQuestion] = useState("");
         const [step, setStep] = useState<Step>("idle");
@@ -65,6 +87,11 @@ export default function MagiConsensusControl() {
         const [, setConsensus] = useState<MagiConsensus | null>(null);
         const [agents, setAgents] = useState<MagiAgent[]>([]);
         const [debug, setDebug] = useState<string | null>(null);
+        const [artifact, setArtifact] = useState<ArtifactState | null>(null);
+        const [artifactError, setArtifactError] = useState<string | null>(null);
+        const [artifactStatusMessage, setArtifactStatusMessage] = useState<string | null>(null);
+        const [uploadingArtifact, setUploadingArtifact] = useState(false);
+        const fileInputRef = useRef<HTMLInputElement | null>(null);
         // Local display buffers to avoid UI depending on DB read latency
         const [displayProposals, setDisplayProposals] = useState<MagiMessage[]>([]);
         // Critiques removed from workflow
@@ -93,6 +120,18 @@ export default function MagiConsensusControl() {
         const [showProposalsModal, setShowProposalsModal] = useState(false);
         const [showVotesModal, setShowVotesModal] = useState(false);
 
+        const getUserId = useCallback(async () => {
+                if (!supabaseBrowser) {
+                        throw new Error("Auth not initialized");
+                }
+                const { data: auth } = await supabaseBrowser.auth.getSession();
+                const userId = auth.session?.user?.id;
+                if (!userId) {
+                        throw new Error("You must be signed in.");
+                }
+                return userId;
+        }, []);
+
         const updateDisplayVotes = useCallback((incoming: MagiVote[] | null | undefined) => {
                 const normalized = normalizeVoteScores(incoming);
                 setDisplayVotes((prev) => {
@@ -105,6 +144,141 @@ export default function MagiConsensusControl() {
                         return normalized;
                 });
         }, [fetchFullRaw]);
+
+        const refreshArtifactStatus = useCallback(
+                async (artifactId: string, userId: string): Promise<ArtifactApiResponse> => {
+                        const res = await fetch(`/api/uploads/${artifactId}?userId=${encodeURIComponent(userId)}`, { cache: "no-store" });
+                        const json = await res.json();
+                        if (!json?.ok) {
+                                throw new Error(json?.error || "Failed to load upload status");
+                        }
+                        const payload = json.artifact as ArtifactApiResponse;
+                        setArtifact({
+                                id: payload.id,
+                                original_filename: payload.original_filename,
+                                status: payload.status,
+                                ready_at: payload.ready_at,
+                                updated_at: payload.updated_at,
+                                manifest: (payload.manifest as Record<string, unknown> | null) ?? null,
+                        });
+                        return payload;
+                },
+                []
+        );
+
+        const waitForArtifactReady = useCallback(
+                async (artifactId: string, userId: string) => {
+                        const timeoutMs = 60_000;
+                        const start = Date.now();
+                        while (Date.now() - start < timeoutMs) {
+                                const payload = await refreshArtifactStatus(artifactId, userId);
+                                if (payload.status === "ready") {
+                                        setArtifactStatusMessage("Bundle ready for security audit.");
+                                        return payload;
+                                }
+                                if (payload.status === "failed") {
+                                        throw new Error("Processing failed. Please re-upload your bundle.");
+                                }
+                                await new Promise((resolve) => setTimeout(resolve, 1500));
+                        }
+                        throw new Error("Processing timed out. Please retry.");
+                },
+                [refreshArtifactStatus]
+        );
+
+        const handleArtifactUpload = useCallback(
+                async (file: File) => {
+                        setArtifactError(null);
+                        const lower = file.name.toLowerCase();
+                        if (!lower.endsWith(".zip")) {
+                                setArtifactError("Only .zip files are supported.");
+                                return;
+                        }
+                        if (file.size > MAX_UPLOAD_BYTES) {
+                                setArtifactError(`File exceeds the ${MAX_UPLOAD_MB}MB limit.`);
+                                return;
+                        }
+
+                        setUploadingArtifact(true);
+                        setArtifactStatusMessage("Requesting upload slot…");
+                        try {
+                                const userId = await getUserId();
+                                const res = await fetch("/api/uploads", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({
+                                                filename: file.name,
+                                                size: file.size,
+                                                userId,
+                                        }),
+                                });
+                                const json = await res.json();
+                                if (!json?.ok) {
+                                        throw new Error(json?.error || "Failed to initialize upload");
+                                }
+                                const artifactId: string = json.artifactId;
+                                if (!json.uploadUrl) {
+                                        throw new Error("Missing upload URL from server");
+                                }
+                                setArtifact({
+                                        id: artifactId,
+                                        original_filename: file.name,
+                                        status: json.status ?? "uploaded",
+                                        manifest: null,
+                                });
+                                setArtifactStatusMessage("Uploading archive…");
+                                const uploadRes = await fetch(json.uploadUrl, {
+                                        method: "PUT",
+                                        headers: { "Content-Type": "application/zip" },
+                                        body: file,
+                                });
+                                if (!uploadRes.ok) {
+                                        throw new Error("Upload failed. Please retry.");
+                                }
+                                setArtifactStatusMessage("Processing uploaded bundle…");
+                                const processRes = await fetch(`/api/uploads/${artifactId}/process`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ userId }),
+                                });
+                                const processJson = await processRes.json();
+                                if (!processJson?.ok && processRes.status >= 400) {
+                                        throw new Error(processJson?.error || "Unable to process uploaded bundle");
+                                }
+                                await waitForArtifactReady(artifactId, userId);
+                                if (!question.trim()) {
+                                        setQuestion(
+                                                `Perform a security audit of ${file.name}. Highlight vulnerabilities, misconfigurations, and remediation steps.`
+                                        );
+                                }
+                        } catch (err: any) {
+                                setArtifactError(err?.message || "Upload failed. Please try again.");
+                                setArtifactStatusMessage(null);
+                                setArtifact(null);
+                        } finally {
+                                setUploadingArtifact(false);
+                        }
+                },
+                [getUserId, question, waitForArtifactReady]
+        );
+
+        const onFileInputChange = useCallback(
+                (event: ChangeEvent<HTMLInputElement>) => {
+                        const file = event.target.files?.[0];
+                        if (file) {
+                                void handleArtifactUpload(file);
+                        }
+                        event.target.value = "";
+                },
+                [handleArtifactUpload]
+        );
+
+        const clearArtifact = useCallback(() => {
+                setArtifact(null);
+                setArtifactError(null);
+                setArtifactStatusMessage(null);
+        }, []);
+
 
 	const [verifiedAll, setVerifiedAll] = useState<boolean>(false);
 	useEffect(() => {
@@ -144,16 +318,30 @@ export default function MagiConsensusControl() {
 		}
 	}, [showHistory, loadSessions]);
 
+        useEffect(() => {
+                if (typeof window === "undefined") return;
+                const handler = (event: Event) => {
+                        const custom = event as CustomEvent<{ open?: boolean }>;
+                        setShowClearConfirm(false);
+                        setClearHistoryError(null);
+                        if (typeof custom.detail?.open === "boolean") {
+                                setShowHistory(custom.detail.open);
+                        } else {
+                                setShowHistory((prev) => !prev);
+                        }
+                };
+                window.addEventListener("magi-toggle-history", handler as EventListener);
+                return () => {
+                        window.removeEventListener("magi-toggle-history", handler as EventListener);
+                };
+        }, []);
+
         const clearHistory = useCallback(async () => {
                 if (!supabaseBrowser) return;
                 setClearingHistory(true);
                 setClearHistoryError(null);
                 try {
-                        const { data: auth } = await supabaseBrowser.auth.getSession();
-                        const userId = auth.session?.user?.id;
-                        if (!userId) {
-                                throw new Error("You must be signed in.");
-                        }
+                        const userId = await getUserId();
                         const res = await fetch(`/api/magi/sessions?userId=${encodeURIComponent(userId)}`, {
                                 method: "DELETE",
                         });
@@ -169,7 +357,7 @@ export default function MagiConsensusControl() {
                 } finally {
                         setClearingHistory(false);
                 }
-        }, [loadSessions]);
+        }, [getUserId, loadSessions]);
 
 
         const getKeys = useCallback(() => {
@@ -454,6 +642,10 @@ export default function MagiConsensusControl() {
                         setError("All three providers must be linked first.");
                         return;
                 }
+                if (artifact && artifact.status !== "ready") {
+                        setError("Wait for the uploaded bundle to finish processing.");
+                        return;
+                }
                 const q = question.trim();
                 if (!q) {
                         setError("Please enter a question.");
@@ -462,18 +654,13 @@ export default function MagiConsensusControl() {
                 try {
                         setStep("creating");
                         setCurrentStage("creating");
-                        const { data: auth } = await supabaseBrowser.auth.getSession();
-                        const userId = auth.session?.user?.id;
-                        if (!userId) {
-                                setError("You must be signed in.");
-                                setStep("error");
-                                return;
-                        }
+                        const userId = await getUserId();
                         const keys = getKeys();
+                        const attachedArtifactId = artifact?.status === "ready" ? artifact.id : undefined;
                         const createRes = await fetch("/api/magi/session", {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ question: q, userId, keys }),
+                                body: JSON.stringify({ question: q, userId, keys, artifactId: attachedArtifactId }),
                         });
                         const created = await createRes.json();
                         if (!created.ok) {
@@ -492,6 +679,7 @@ export default function MagiConsensusControl() {
                                         updated_at: nowIso,
                                         finalMessageId: null,
                                         consensusSummary: null,
+                                        artifact_id: attachedArtifactId ?? null,
                                 };
                                 const deduped = prev.filter((s) => s.id !== sessionId);
                                 return [optimistic, ...deduped];
@@ -555,6 +743,7 @@ export default function MagiConsensusControl() {
                                                           updated_at: new Date().toISOString(),
                                                           finalMessageId: finalData?.finalMessage?.id ?? s.finalMessageId ?? null,
                                                           consensusSummary: finalData?.finalMessage?.content ?? s.consensusSummary ?? null,
+                                                          artifact_id: s.artifact_id ?? attachedArtifactId ?? null,
                                                   }
                                                 : s
                                 )
@@ -564,7 +753,7 @@ export default function MagiConsensusControl() {
                         setError(e?.message || "Unexpected error");
                         setStep("error");
                 }
-        }, [question, verifiedAll, fetchFull, runStep, getKeys, loadSessions, showHistory]);
+        }, [artifact, fetchFull, getKeys, getUserId, loadSessions, question, runStep, showHistory, verifiedAll]);
 
         const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
         const consensusMessage = displayConsensus ?? messages.find((m) => m.role === "consensus") ?? null;
@@ -593,6 +782,41 @@ export default function MagiConsensusControl() {
         }, [displayVotes]);
 
         const votes = useMemo(() => normalizeVoteScores(votesSource), [votesSource]);
+
+        const artifactManifest = useMemo(() => {
+                return artifact?.manifest ? (artifact.manifest as Record<string, any>) : null;
+        }, [artifact]);
+
+        const artifactProcessedCount = useMemo(() => {
+                if (!artifactManifest) return null;
+                if (typeof artifactManifest.processedFiles === "number") return artifactManifest.processedFiles;
+                if (typeof artifactManifest.totalFiles === "number") return artifactManifest.totalFiles;
+                return null;
+        }, [artifactManifest]);
+
+        const artifactLanguageSummary = useMemo(() => {
+                if (!artifactManifest || artifact?.status !== "ready") return null;
+                const languages = artifactManifest.languages as Record<string, number> | undefined;
+                if (!languages) return null;
+                const top = Object.entries(languages)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 4)
+                        .map(([lang, count]) => `${lang}(${count})`);
+                return top.length ? top.join(", ") : null;
+        }, [artifact?.status, artifactManifest]);
+
+        const artifactFileSummary = useMemo(() => {
+                if (!artifactManifest || artifact?.status !== "ready") return null;
+                const topFiles = Array.isArray(artifactManifest.topFiles)
+                        ? (artifactManifest.topFiles as Array<Record<string, any>>)
+                        : [];
+                if (!topFiles.length) return null;
+                return topFiles
+                        .slice(0, 3)
+                        .map((entry) => (typeof entry.path === "string" ? entry.path : ""))
+                        .filter(Boolean)
+                        .join(", ");
+        }, [artifact?.status, artifactManifest]);
 
         const agentById = useMemo(() => {
                 const map: Record<string, MagiAgent> = {};
@@ -658,21 +882,87 @@ export default function MagiConsensusControl() {
 				<p className="ui-text text-white/60 text-sm">Ask once. Three cores deliberate, then answer.</p>
 			</header>
                         <div className="magi-panel border-white/15 p-4 relative">
-				<button
-					type="button"
-					onClick={() => setShowHistory((v) => !v)}
-					className="absolute right-3 top-3 ui-text text-xs px-2 py-1 rounded border border-white/20 bg-white/10 hover:bg-white/15 transition"
-					title="View past chats"
-				>
-					History
-				</button>
+				<input ref={fileInputRef} type="file" accept=".zip" className="hidden" onChange={onFileInputChange} />
+                                <div className="border border-white/10 bg-white/5 rounded-md p-3 mb-4">
+                                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                                <div>
+                                                        <label className="ui-text text-sm text-white/70 block">Code bundle (.zip)</label>
+                                                        <p className="ui-text text-xs text-white/50">
+                                                                Optional: attach a zipped repo so MAGI cores can audit real code. Max {MAX_UPLOAD_MB}MB.
+                                                        </p>
+                                                </div>
+                                                <div className="flex flex-col w-full gap-2 md:w-auto md:flex-row">
+                                                        <button
+                                                                type="button"
+                                                                onClick={() => fileInputRef.current?.click()}
+                                                                disabled={uploadingArtifact}
+                                                                className="px-3 py-1.5 rounded-md border border-white/20 bg-white/10 hover:bg-white/20 ui-text text-xs disabled:opacity-60"
+                                                        >
+                                                                {artifact ? "Replace bundle" : "Select .zip"}
+                                                        </button>
+                                                        {artifact && (
+                                                                <button
+                                                                        type="button"
+                                                                        onClick={clearArtifact}
+                                                                        className="px-3 py-1.5 rounded-md border border-white/10 bg-white/5 hover:bg-white/15 ui-text text-xs"
+                                                                >
+                                                                        Remove
+                                                                </button>
+                                                        )}
+                                                </div>
+                                        </div>
+                                        {artifact ? (
+                                                <div className="mt-3">
+                                                        <div className="flex flex-wrap items-center gap-2 ui-text text-xs text-white/70">
+                                                                <span className="font-semibold text-white/90">{artifact.original_filename}</span>
+                                                                <span
+                                                                        className={clsx(
+                                                                                "uppercase tracking-widest border px-2 py-0.5 rounded-full text-[10px]",
+                                                                                artifact.status === "ready" &&
+                                                                                        "border-magiGreen/60 text-magiGreen/80 bg-magiGreen/10",
+                                                                                artifact.status === "processing" &&
+                                                                                        "border-magiBlue/60 text-magiBlue/80 bg-magiBlue/10",
+                                                                                artifact.status === "uploaded" &&
+                                                                                        "border-white/20 text-white/60 bg-white/5",
+                                                                                artifact.status === "failed" && "border-red-500/60 text-red-300 bg-red-500/10"
+                                                                        )}
+                                                                >
+                                                                        {artifact.status}
+                                                                </span>
+                                                        </div>
+                                                        {artifactProcessedCount !== null && (
+                                                                <div className="ui-text text-[11px] text-white/60 mt-1">
+                                                                        Files processed: {artifactProcessedCount}
+                                                                </div>
+                                                        )}
+                                                        {artifactLanguageSummary && (
+                                                                <div className="ui-text text-[11px] text-white/60 mt-1">
+                                                                        Languages: {artifactLanguageSummary}
+                                                                </div>
+                                                        )}
+                                                        {artifactFileSummary && (
+                                                                <div className="ui-text text-[11px] text-white/60 mt-1">
+                                                                        Key files: {artifactFileSummary}
+                                                                </div>
+                                                        )}
+                                                </div>
+                                        ) : (
+                                                <p className="ui-text text-xs text-white/50 mt-2">
+                                                        No bundle attached. MAGI will answer from the prompt alone.
+                                                </p>
+                                        )}
+                                        {artifactStatusMessage && (
+                                                <div className="ui-text text-xs text-white/60 mt-2">{artifactStatusMessage}</div>
+                                        )}
+                                        {artifactError && <div className="ui-text text-xs text-red-400 mt-2">{artifactError}</div>}
+                                </div>
                                 <label className="ui-text text-sm text-white/70 block mb-2">Question</label>
                                 <textarea
                                         value={question}
                                         onChange={(e) => setQuestion(e.target.value)}
                                         rows={3}
                                         className="w-full rounded-md bg-white/10 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
-                                        placeholder="e.g., Outline a safe rollout plan for feature X"
+                                        placeholder="e.g., Audit the uploaded payments service for security flaws"
                                 />
                                 <div className="mt-3 flex flex-wrap items-center gap-3">
                                         <button
@@ -1021,7 +1311,8 @@ export default function MagiConsensusControl() {
 
                                 {/* Voting Ledger moved inline into the Voting stage card */}
 
-                                <details className="magi-panel border-white/15 p-4 group" data-step="consensus">
+                                <div className="relative">
+                                        <details className="magi-panel border-white/15 p-4 group" data-step="consensus">
                                         <summary className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 cursor-pointer list-none">
                                                 <div>
                                                         <h3 className="title-text text-base font-semibold text-white/90">Final Consensus</h3>
@@ -1062,7 +1353,8 @@ export default function MagiConsensusControl() {
                                                         Consensus will appear here once the council finishes deliberating.
                                                 </div>
                                         )}
-                                </details>
+                                        </details>
+                                </div>
                         </div>
 
 		</section>

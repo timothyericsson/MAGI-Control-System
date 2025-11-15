@@ -16,6 +16,7 @@ export interface MagiSession {
 	id: string;
 	user_id: string;
 	question: string;
+	artifact_id?: string | null;
 	status: MagiSessionStatus;
 	error: string | null;
 	created_at: string;
@@ -56,6 +57,7 @@ export interface MagiConsensus {
 export interface CreateSessionRequestBody {
         question: string;
         userId?: string;
+        artifactId?: string;
         keys?: {
                 openai?: string;
                 anthropic?: string;

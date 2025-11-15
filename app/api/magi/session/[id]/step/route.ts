@@ -10,6 +10,7 @@ import {
         upsertConsensus,
 } from "@/lib/magiRepo";
 import { canonicalModelFor } from "@/lib/magiModels";
+import { buildArtifactContextText } from "@/lib/codeArtifacts";
 import type {
         MagiAgent,
         MagiMessage,
@@ -398,11 +399,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                 if (step === "propose") {
                         const stageEvents: string[] = [];
                         const userQuestion = full.messages.find((m) => m.role === "user")?.content ?? "";
+                        const artifactContext =
+                                full.session?.artifact_id ? await buildArtifactContextText(full.session.artifact_id) : null;
                         for (const a of agents) {
                                 let chatResult: AgentChatResult | null = null;
                                 try {
+                                        const systemPrompts = [
+                                                `You are ${a.name}. Provide a concise, security-focused audit response. Highlight high-risk vulnerabilities, abuse cases, and hardening steps. Keep it under 160 words.`,
+                                        ];
+                                        if (artifactContext) {
+                                                systemPrompts.push(
+                                                        "Repository context:\n" +
+                                                                artifactContext +
+                                                                "\n\nYour findings must reference file paths and explain why each issue is risky."
+                                                );
+                                        } else {
+                                                systemPrompts.push("Reference concrete code risks where possible.");
+                                        }
                                         chatResult = await agentChat(a, keys, [
-                                                { role: "system", content: `You are ${a.name}. Provide a concise, helpful answer. Keep it under 120 words.` },
+                                                { role: "system", content: systemPrompts.join("\n\n") },
                                                 { role: "user", content: userQuestion },
                                         ]);
                                 } catch (err: any) {

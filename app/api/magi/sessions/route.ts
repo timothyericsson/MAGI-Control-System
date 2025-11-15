@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
 		const supabase = getSupabaseServer();
 		const { data, error } = await supabase
 			.from("magi_sessions")
-			.select("id, user_id, question, status, error, created_at, updated_at")
+			.select("id, user_id, question, artifact_id, status, error, created_at, updated_at")
 			.eq("user_id", userId)
 			.order("created_at", { ascending: false });
 		if (error) {

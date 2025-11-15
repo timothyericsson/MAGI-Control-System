@@ -33,16 +33,30 @@ export default function TopBar() {
 		window.location.href = "/login";
 	}
 
+	function toggleHistoryDrawer() {
+		if (typeof window === "undefined") return;
+		window.dispatchEvent(new CustomEvent("magi-toggle-history"));
+	}
+
         return (
                 <div className="absolute left-4 bottom-4 z-50">
                         {!loading && isAuthed && (
-                                <button
-                                        onClick={handleLogout}
-                                        className="ui-text px-3 py-1 text-sm rounded-md border border-white/20 bg-white/10 hover:bg-white/15 transition"
-                                        title="Sign out"
-                                >
-                                        Log out
-                                </button>
+                                <div className="flex items-center gap-2">
+                                        <button
+                                                onClick={toggleHistoryDrawer}
+                                                className="ui-text px-3 py-1 text-sm rounded-md border border-white/20 bg-white/10 hover:bg-white/15 transition"
+                                                title="View MAGI history"
+                                        >
+                                                History
+                                        </button>
+                                        <button
+                                                onClick={handleLogout}
+                                                className="ui-text px-3 py-1 text-sm rounded-md border border-white/20 bg-white/10 hover:bg-white/15 transition"
+                                                title="Sign out"
+                                        >
+                                                Log out
+                                        </button>
+                                </div>
                         )}
 		</div>
 	);
