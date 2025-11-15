@@ -554,7 +554,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                 stageEvents.push(
                                         `Consensus selected proposal #${best.msg.id} (score ${best.score}) as message #${consensusMsg.id}`
                                 );
-                                await upsertConsensus({ sessionId, finalMessageId, summary: null });
+                                await upsertConsensus({ sessionId, finalMessageId, summary: best.msg.content });
                                 await setSessionStatus(sessionId, "consensus");
                         } else {
                                 stageEvents.push("Consensus failed: no proposals available.");

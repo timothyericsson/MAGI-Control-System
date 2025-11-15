@@ -249,6 +249,20 @@ export default function MagiConsensusControl() {
                                                         ? consensusMsgs[consensusMsgs.length - 1] // latest by created order
                                                         : null;
                                 }
+                                if (!finalMsg && consensusRow && typeof (consensusRow as any).summary === "string" && (consensusRow as any).summary.trim()) {
+                                        finalMsg = {
+                                                id: finalId ?? -1,
+                                                session_id: sessionId,
+                                                agent_id: null,
+                                                role: "consensus",
+                                                content: ((consensusRow as any).summary as string).trim(),
+                                                model: null,
+                                                tokens: null,
+                                                meta: {},
+                                                created_at: new Date().toISOString(),
+                                        };
+                                        return { question, finalMessage: finalMsg, derived: false };
+                                }
                                 if (!finalMsg) {
                                         const proposals = msgs.filter((m) => m.role === "agent_proposal");
                                         if (proposals.length > 0) {
@@ -413,6 +427,23 @@ export default function MagiConsensusControl() {
                                 throw new Error(created.error || "Failed to create session");
                         }
                         const sessionId: string = created.sessionId;
+                        const nowIso = new Date().toISOString();
+                        setSessions((prev) => {
+                                const optimistic: MagiSession = {
+                                        id: sessionId,
+                                        user_id: userId,
+                                        question: q,
+                                        status: "running",
+                                        error: null,
+                                        created_at: nowIso,
+                                        updated_at: nowIso,
+                                };
+                                const deduped = prev.filter((s) => s.id !== sessionId);
+                                return [optimistic, ...deduped];
+                        });
+                        if (showHistory) {
+                                loadSessions();
+                        }
                         await fetchFull(sessionId);
 
                         setStep("proposing");
@@ -460,11 +491,17 @@ export default function MagiConsensusControl() {
                         setStep("done");
                         setCurrentStage("done");
                         setDebug("Consensus ready");
+                        setSessions((prev) =>
+                                prev.map((s) =>
+                                        s.id === sessionId ? { ...s, status: "consensus", updated_at: new Date().toISOString() } : s
+                                )
+                        );
+                        loadSessions();
                 } catch (e: any) {
                         setError(e?.message || "Unexpected error");
                         setStep("error");
                 }
-        }, [question, verifiedAll, fetchFull, runStep, getKeys]);
+        }, [question, verifiedAll, fetchFull, runStep, getKeys, loadSessions, showHistory]);
 
         const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
         const consensusMessage = displayConsensus ?? messages.find((m) => m.role === "consensus") ?? null;
