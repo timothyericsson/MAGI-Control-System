@@ -27,7 +27,9 @@ export async function POST(req: NextRequest) {
 
 		const artifact = await createArtifactRecord({ userId, filename, byteLength: size });
 		const supabase = getSupabaseServer();
-		const { data, error } = await supabase.storage.from(CODE_BUCKET).createSignedUploadUrl(artifact.storage_path, 60);
+		const { data, error } = await supabase.storage
+			.from(CODE_BUCKET)
+			.createSignedUploadUrl(artifact.storage_path, { upsert: true });
 		if (error) {
 			return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
 		}
