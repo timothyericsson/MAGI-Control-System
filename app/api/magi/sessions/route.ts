@@ -19,7 +19,39 @@ export async function GET(req: NextRequest) {
 		if (error) {
 			return new Response(JSON.stringify({ ok: false, error: error.message }), { status: 500 });
 		}
-		return new Response(JSON.stringify({ ok: true, sessions: data ?? [] }), {
+
+		const sessions = data ?? [];
+		let consensusBySession: Record<string, { final_message_id: number | null; summary: string | null }> = {};
+		if (sessions.length > 0) {
+			const sessionIds = sessions.map((s) => s.id);
+			const { data: consensusRows, error: consensusError } = await supabase
+				.from("magi_consensus")
+				.select("session_id, final_message_id, summary")
+				.in("session_id", sessionIds);
+			if (consensusError) {
+				return new Response(JSON.stringify({ ok: false, error: consensusError.message }), {
+					status: 500,
+				});
+			}
+			consensusBySession = (consensusRows || []).reduce((acc, row) => {
+				acc[row.session_id] = {
+					final_message_id: row.final_message_id,
+					summary: row.summary,
+				};
+				return acc;
+			}, {} as Record<string, { final_message_id: number | null; summary: string | null }>);
+		}
+
+		const enriched = sessions.map((s) => {
+			const consensus = consensusBySession[s.id] || { final_message_id: null, summary: null };
+			return {
+				...s,
+				finalMessageId: consensus.final_message_id,
+				consensusSummary: consensus.summary,
+			};
+		});
+
+		return new Response(JSON.stringify({ ok: true, sessions: enriched }), {
 			status: 200,
 			headers: { "Cache-Control": "no-store" },
 		});

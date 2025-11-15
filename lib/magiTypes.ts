@@ -20,6 +20,8 @@ export interface MagiSession {
 	error: string | null;
 	created_at: string;
 	updated_at: string;
+	finalMessageId?: number | null;
+	consensusSummary?: string | null;
 }
 
 export interface MagiMessage {

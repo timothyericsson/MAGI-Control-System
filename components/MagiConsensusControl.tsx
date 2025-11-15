@@ -101,7 +101,7 @@ export default function MagiConsensusControl() {
                         }
                         return normalized;
                 });
-        }, []);
+        }, [fetchFullRaw]);
 
 	const [verifiedAll, setVerifiedAll] = useState<boolean>(false);
 	useEffect(() => {
@@ -214,6 +214,24 @@ export default function MagiConsensusControl() {
         const openHistoryDetail = useCallback(async (s: MagiSession) => {
                 setHistoryDetailLoading(true);
                 setShowHistoryDetail(true);
+                const fallbackSummary = typeof s.consensusSummary === "string" ? s.consensusSummary.trim() : "";
+                const fallbackFinalId =
+                        typeof s.finalMessageId === "number" && Number.isFinite(s.finalMessageId) ? s.finalMessageId : null;
+
+                function buildMessageFromSummary(summary: string, idFallback: number | null): MagiMessage {
+                        return {
+                                id: idFallback ?? -1,
+                                session_id: s.id,
+                                agent_id: null,
+                                role: "consensus",
+                                content: summary,
+                                model: null,
+                                tokens: null,
+                                meta: {},
+                                created_at: new Date().toISOString(),
+                        };
+                }
+
                 try {
                         async function resolveFinal(sessionId: string): Promise<{ question: string; finalMessage: MagiMessage | null; derived: boolean }> {
                                 const data = await fetchFullRaw(sessionId);
@@ -250,17 +268,7 @@ export default function MagiConsensusControl() {
                                                         : null;
                                 }
                                 if (!finalMsg && consensusRow && typeof (consensusRow as any).summary === "string" && (consensusRow as any).summary.trim()) {
-                                        finalMsg = {
-                                                id: finalId ?? -1,
-                                                session_id: sessionId,
-                                                agent_id: null,
-                                                role: "consensus",
-                                                content: ((consensusRow as any).summary as string).trim(),
-                                                model: null,
-                                                tokens: null,
-                                                meta: {},
-                                                created_at: new Date().toISOString(),
-                                        };
+                                        finalMsg = buildMessageFromSummary(((consensusRow as any).summary as string).trim(), finalId);
                                         return { question, finalMessage: finalMsg, derived: false };
                                 }
                                 if (!finalMsg) {
@@ -303,12 +311,27 @@ export default function MagiConsensusControl() {
                                 }
                         }
 
+                        if (!finalMessage && fallbackSummary) {
+                                finalMessage = buildMessageFromSummary(fallbackSummary, fallbackFinalId);
+                                derived = false;
+                        }
+
                         setHistoryDetail({
                                 id: s.id,
                                 createdAt: s.created_at,
                                 question,
                                 finalMessage,
                                 derived,
+                        });
+                } catch (err) {
+                        console.error("Failed to load history detail", err);
+                        const fallbackMessage = fallbackSummary ? buildMessageFromSummary(fallbackSummary, fallbackFinalId) : null;
+                        setHistoryDetail({
+                                id: s.id,
+                                createdAt: s.created_at,
+                                question: s.question,
+                                finalMessage: fallbackMessage,
+                                derived: false,
                         });
                 } finally {
                         setHistoryDetailLoading(false);
@@ -437,6 +460,8 @@ export default function MagiConsensusControl() {
                                         error: null,
                                         created_at: nowIso,
                                         updated_at: nowIso,
+                                        finalMessageId: null,
+                                        consensusSummary: null,
                                 };
                                 const deduped = prev.filter((s) => s.id !== sessionId);
                                 return [optimistic, ...deduped];
@@ -493,7 +518,15 @@ export default function MagiConsensusControl() {
                         setDebug("Consensus ready");
                         setSessions((prev) =>
                                 prev.map((s) =>
-                                        s.id === sessionId ? { ...s, status: "consensus", updated_at: new Date().toISOString() } : s
+                                        s.id === sessionId
+                                                ? {
+                                                          ...s,
+                                                          status: "consensus",
+                                                          updated_at: new Date().toISOString(),
+                                                          finalMessageId: finalData?.finalMessage?.id ?? s.finalMessageId ?? null,
+                                                          consensusSummary: finalData?.finalMessage?.content ?? s.consensusSummary ?? null,
+                                                  }
+                                                : s
                                 )
                         );
                         loadSessions();
