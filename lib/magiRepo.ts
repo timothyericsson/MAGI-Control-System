@@ -19,18 +19,24 @@ export async function listAgents(): Promise<MagiAgent[]> {
         })) as unknown as MagiAgent[];
 }
 
-export async function createSession(userId: string, question: string, artifactId?: string | null): Promise<MagiSession> {
-	const supabase = getSupabaseServer();
-	const { data, error } = await supabase
-		.from("magi_sessions")
-		.insert([
-			{
-				user_id: userId,
-				question,
-				artifact_id: artifactId ?? null,
-				status: "running" as MagiSessionStatus,
-			},
-		])
+export async function createSession(
+        userId: string,
+        question: string,
+        artifactId?: string | null,
+        liveUrl?: string | null
+): Promise<MagiSession> {
+        const supabase = getSupabaseServer();
+        const { data, error } = await supabase
+                .from("magi_sessions")
+                .insert([
+                        {
+                                user_id: userId,
+                                question,
+                                artifact_id: artifactId ?? null,
+                                live_url: liveUrl ?? null,
+                                status: "running" as MagiSessionStatus,
+                        },
+                ])
 		.select("*")
 		.single();
 	if (error) throw error;
