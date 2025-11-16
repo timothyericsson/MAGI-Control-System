@@ -23,6 +23,7 @@ import type {
         StepRequestBody,
 } from "@/lib/magiTypes";
 
+type ProviderName = "openai" | "anthropic" | "grok";
 type ProviderKeyMap = { openai?: string; anthropic?: string; grok?: string; xai?: string };
 
 type AgentChatResult = {
@@ -53,6 +54,12 @@ const HTTP_TOOL_NAME = "magi_http_request";
 const HTTP_TOOL_DESCRIPTION =
 "Forward a cURL-style HTTP request via MAGI's relay so you can inspect live endpoints while auditing.";
 const MAX_HTTP_TOOL_CALLS = 5;
+
+const PROVIDER_TIMEOUT_MS: Record<ProviderName, number> = {
+        openai: 20_000,
+        anthropic: 45_000,
+        grok: 20_000,
+};
 
 const CONTEXT_CHAR_BUDGET = 26_000;
 const CONTEXT_ARTIFACT_SHARE = 0.65;
@@ -586,11 +593,12 @@ options?: { enableHttpTool?: boolean }
 ): Promise<AgentChatResult> {
 const model = canonicalModelFor(agent.provider, agent.model);
 
-async function invokePrimary(provider: "openai" | "anthropic" | "grok", apiKey: string, label: string) {
+async function invokePrimary(provider: ProviderName, apiKey: string, label: string) {
+const timeoutMs = PROVIDER_TIMEOUT_MS[provider] ?? PROVIDER_TIMEOUT_MS.openai;
 if (provider === "openai") {
 const result = await withTimeout(
 callOpenAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
-20000,
+timeoutMs,
 label
 );
 return { content: result.content, providerUsed: "openai" as const, httpRequestCount: result.httpRequests };
@@ -598,14 +606,14 @@ return { content: result.content, providerUsed: "openai" as const, httpRequestCo
 if (provider === "anthropic") {
 const result = await withTimeout(
 callAnthropic(apiKey, model, messages as any, agent.slug, options),
-20000,
+timeoutMs,
 label
 );
 return { content: result.content, providerUsed: "anthropic" as const, httpRequestCount: result.httpRequests };
 }
 const result = await withTimeout(
 callXAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
-20000,
+timeoutMs,
 label
 );
 return { content: result.content, providerUsed: "grok" as const, httpRequestCount: result.httpRequests };
