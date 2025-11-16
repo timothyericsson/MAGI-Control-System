@@ -11,6 +11,7 @@ import {
 } from "@/lib/magiRepo";
 import { canonicalModelFor } from "@/lib/magiModels";
 import { buildArtifactContextText } from "@/lib/codeArtifacts";
+import { buildLiveUrlContext } from "@/lib/liveSiteContext";
 import type {
         MagiAgent,
         MagiMessage,
@@ -399,8 +400,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                 if (step === "propose") {
                         const stageEvents: string[] = [];
                         const userQuestion = full.messages.find((m) => m.role === "user")?.content ?? "";
-                        const artifactContext =
-                                full.session?.artifact_id ? await buildArtifactContextText(full.session.artifact_id) : null;
+                        const artifactContextPromise = full.session?.artifact_id
+                                ? buildArtifactContextText(full.session.artifact_id)
+                                : Promise.resolve(null);
+                        const liveUrlContextPromise = full.session?.live_url
+                                ? buildLiveUrlContext(full.session.live_url)
+                                : Promise.resolve(null);
+                        const [artifactContext, liveUrlContext] = await Promise.all([
+                                artifactContextPromise,
+                                liveUrlContextPromise,
+                        ]);
                         for (const a of agents) {
                                 let chatResult: AgentChatResult | null = null;
                                 try {
@@ -415,6 +424,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                                 );
                                         } else {
                                                 systemPrompts.push("Reference concrete code risks where possible.");
+                                        }
+                                        if (liveUrlContext) {
+                                                systemPrompts.push(
+                                                        "Live URL probe results:\n" +
+                                                                liveUrlContext +
+                                                                "\n\nIncorporate any exposed endpoints, headers, or responses into the audit."
+                                                );
                                         }
                                         chatResult = await agentChat(a, keys, [
                                                 { role: "system", content: systemPrompts.join("\n\n") },

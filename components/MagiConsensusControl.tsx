@@ -3,6 +3,7 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseClient";
 import { safeLoad } from "@/lib/localStore";
+import { normalizeLiveUrl } from "@/lib/liveUrl";
 import type {
         MagiAgent,
         MagiConsensus,
@@ -91,6 +92,8 @@ export default function MagiConsensusControl() {
         const [artifactError, setArtifactError] = useState<string | null>(null);
         const [artifactStatusMessage, setArtifactStatusMessage] = useState<string | null>(null);
         const [uploadingArtifact, setUploadingArtifact] = useState(false);
+        const [liveUrl, setLiveUrl] = useState("");
+        const [liveUrlError, setLiveUrlError] = useState<string | null>(null);
         const fileInputRef = useRef<HTMLInputElement | null>(null);
         // Local display buffers to avoid UI depending on DB read latency
         const [displayProposals, setDisplayProposals] = useState<MagiMessage[]>([]);
@@ -114,6 +117,7 @@ export default function MagiConsensusControl() {
                 question: string;
                 finalMessage: MagiMessage | null;
                 derived: boolean;
+                liveUrl: string | null;
         } | null>(null);
 
         // Modal toggles for stage details
@@ -277,6 +281,36 @@ export default function MagiConsensusControl() {
                 setArtifact(null);
                 setArtifactError(null);
                 setArtifactStatusMessage(null);
+        }, []);
+
+        const normalizedLiveUrl = useMemo(() => {
+                if (!liveUrl.trim()) return null;
+                return normalizeLiveUrl(liveUrl) ?? null;
+        }, [liveUrl]);
+
+        useEffect(() => {
+                if (!liveUrl.trim()) {
+                        setLiveUrlError(null);
+                        return;
+                }
+                if (!normalizedLiveUrl) {
+                        setLiveUrlError("Enter a valid http(s) URL");
+                } else {
+                        setLiveUrlError(null);
+                }
+        }, [liveUrl, normalizedLiveUrl]);
+
+        useEffect(() => {
+                if (!question.trim() && normalizedLiveUrl) {
+                        setQuestion(
+                                `Perform a security audit of the live site at ${normalizedLiveUrl}. Highlight HTTP exposures, misconfigurations, and remediation steps.`
+                        );
+                }
+        }, [normalizedLiveUrl, question]);
+
+        const clearLiveUrl = useCallback(() => {
+                setLiveUrl("");
+                setLiveUrlError(null);
         }, []);
 
 
@@ -451,14 +485,17 @@ export default function MagiConsensusControl() {
                 }
 
                 try {
-                        async function resolveFinal(sessionId: string): Promise<{ question: string; finalMessage: MagiMessage | null; derived: boolean }> {
+                        async function resolveFinal(sessionId: string): Promise<{ question: string; finalMessage: MagiMessage | null; derived: boolean; liveUrl: string | null }> {
                                 const data = await fetchFullRaw(sessionId);
                                 if (!data?.ok) {
-                                        return { question: s.question, finalMessage: null, derived: false };
+                                        return { question: s.question, finalMessage: null, derived: false, liveUrl: s.live_url ?? null };
                                 }
                                 const msgs: MagiMessage[] = Array.isArray(data.messages) ? (data.messages as MagiMessage[]) : [];
                                 const votes: MagiVote[] = Array.isArray(data.votes) ? (data.votes as MagiVote[]) : [];
                                 const question: string = data.session?.question ?? s.question;
+                                const liveUrl: string | null = typeof data.session?.live_url === "string"
+                                        ? (data.session.live_url as string)
+                                        : s.live_url ?? null;
                                 const consensusRow = data.consensus || null;
                                 let finalId: number | null = null;
                                 if (consensusRow) {
@@ -487,7 +524,7 @@ export default function MagiConsensusControl() {
                                 }
                                 if (!finalMsg && consensusRow && typeof (consensusRow as any).summary === "string" && (consensusRow as any).summary.trim()) {
                                         finalMsg = buildMessageFromSummary(((consensusRow as any).summary as string).trim(), finalId);
-                                        return { question, finalMessage: finalMsg, derived: false };
+                                        return { question, finalMessage: finalMsg, derived: false, liveUrl };
                                 }
                                 if (!finalMsg) {
                                         const proposals = msgs.filter((m) => m.role === "agent_proposal");
@@ -507,15 +544,15 @@ export default function MagiConsensusControl() {
                                                 }
                                                 if (best) {
                                                         finalMsg = best;
-                                                        return { question, finalMessage: finalMsg, derived: true };
+                                                        return { question, finalMessage: finalMsg, derived: true, liveUrl };
                                                 }
                                         }
                                 }
-                                return { question, finalMessage: finalMsg, derived: false };
+                                return { question, finalMessage: finalMsg, derived: false, liveUrl };
                         }
 
                         // First attempt
-                        let { question, finalMessage, derived } = await resolveFinal(s.id);
+                        let { question, finalMessage, derived, liveUrl } = await resolveFinal(s.id);
 
                         // Retry loop to handle any replication lag or delayed writes
                         if (!finalMessage) {
@@ -525,6 +562,7 @@ export default function MagiConsensusControl() {
                                         question = next.question;
                                         finalMessage = next.finalMessage;
                                         derived = next.derived;
+                                        liveUrl = next.liveUrl;
                                         if (finalMessage) break;
                                 }
                         }
@@ -540,6 +578,7 @@ export default function MagiConsensusControl() {
                                 question,
                                 finalMessage,
                                 derived,
+                                liveUrl: liveUrl ?? s.live_url ?? null,
                         });
                 } catch (err) {
                         console.error("Failed to load history detail", err);
@@ -550,6 +589,7 @@ export default function MagiConsensusControl() {
                                 question: s.question,
                                 finalMessage: fallbackMessage,
                                 derived: false,
+                                liveUrl: s.live_url ?? null,
                         });
                 } finally {
                         setHistoryDetailLoading(false);
@@ -646,6 +686,11 @@ export default function MagiConsensusControl() {
                         setError("Wait for the uploaded bundle to finish processing.");
                         return;
                 }
+                if (liveUrlError) {
+                        setError(liveUrlError);
+                        return;
+                }
+                const sanitizedLiveUrl = normalizedLiveUrl ?? null;
                 const q = question.trim();
                 if (!q) {
                         setError("Please enter a question.");
@@ -660,7 +705,13 @@ export default function MagiConsensusControl() {
                         const createRes = await fetch("/api/magi/session", {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ question: q, userId, keys, artifactId: attachedArtifactId }),
+                                body: JSON.stringify({
+                                        question: q,
+                                        userId,
+                                        keys,
+                                        artifactId: attachedArtifactId,
+                                        liveUrl: sanitizedLiveUrl ?? undefined,
+                                }),
                         });
                         const created = await createRes.json();
                         if (!created.ok) {
@@ -680,6 +731,7 @@ export default function MagiConsensusControl() {
                                         finalMessageId: null,
                                         consensusSummary: null,
                                         artifact_id: attachedArtifactId ?? null,
+                                        live_url: sanitizedLiveUrl,
                                 };
                                 const deduped = prev.filter((s) => s.id !== sessionId);
                                 return [optimistic, ...deduped];
@@ -753,7 +805,19 @@ export default function MagiConsensusControl() {
                         setError(e?.message || "Unexpected error");
                         setStep("error");
                 }
-        }, [artifact, fetchFull, getKeys, getUserId, loadSessions, question, runStep, showHistory, verifiedAll]);
+        }, [
+                artifact,
+                fetchFull,
+                getKeys,
+                getUserId,
+                loadSessions,
+                liveUrlError,
+                normalizedLiveUrl,
+                question,
+                runStep,
+                showHistory,
+                verifiedAll,
+        ]);
 
         const proposals = displayProposals.length > 0 ? displayProposals : messages.filter((m) => m.role === "agent_proposal");
         const consensusMessage = displayConsensus ?? messages.find((m) => m.role === "consensus") ?? null;
@@ -813,10 +877,19 @@ export default function MagiConsensusControl() {
                 if (!topFiles.length) return null;
                 return topFiles
                         .slice(0, 3)
-                        .map((entry) => (typeof entry.path === "string" ? entry.path : ""))
+                        .map((entry) => {
+                                const path = typeof entry.path === "string" ? entry.path : "";
+                                const lang = typeof entry.language === "string" ? entry.language : null;
+                                return lang ? `${path} (${lang})` : path;
+                        })
                         .filter(Boolean)
                         .join(", ");
         }, [artifact?.status, artifactManifest]);
+
+        const liveUrlStatusMessage = useMemo(() => {
+                if (liveUrlError || !normalizedLiveUrl) return null;
+                return `Live requests will target ${normalizedLiveUrl}`;
+        }, [liveUrlError, normalizedLiveUrl]);
 
         const agentById = useMemo(() => {
                 const map: Record<string, MagiAgent> = {};
@@ -956,6 +1029,41 @@ export default function MagiConsensusControl() {
                                         )}
                                         {artifactError && <div className="ui-text text-xs text-red-400 mt-2">{artifactError}</div>}
                                 </div>
+                                <div className="border border-white/10 bg-white/5 rounded-md p-3 mb-4">
+                                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                                <div>
+                                                        <label className="ui-text text-sm text-white/70 block">Live site URL</label>
+                                                        <p className="ui-text text-xs text-white/50">
+                                                                Optional: allow MAGI to run HTTP probes (curl-style requests) against your deployed site.
+                                                        </p>
+                                                </div>
+                                                {liveUrl && (
+                                                        <button
+                                                                type="button"
+                                                                onClick={clearLiveUrl}
+                                                                className="px-3 py-1.5 rounded-md border border-white/10 bg-white/5 hover:bg-white/15 ui-text text-xs"
+                                                        >
+                                                                Remove
+                                                        </button>
+                                                )}
+                                        </div>
+                                        <input
+                                                type="url"
+                                                value={liveUrl}
+                                                onChange={(e) => setLiveUrl(e.target.value)}
+                                                placeholder="https://example.com"
+                                                className="mt-2 w-full rounded-md bg-white/10 border border-white/20 px-3 py-2 outline-none focus:ring-2 focus:ring-magiBlue/40"
+                                        />
+                                        {liveUrlStatusMessage && (
+                                                <div className="ui-text text-xs text-white/60 mt-2">{liveUrlStatusMessage}</div>
+                                        )}
+                                        {liveUrlError && <div className="ui-text text-xs text-red-400 mt-2">{liveUrlError}</div>}
+                                        {!liveUrl && (
+                                                <p className="ui-text text-xs text-white/50 mt-2">
+                                                        No live target provided. MAGI will rely on your prompt and any uploaded bundle.
+                                                </p>
+                                        )}
+                                </div>
                                 <label className="ui-text text-sm text-white/70 block mb-2">Question</label>
                                 <textarea
                                         value={question}
@@ -1076,6 +1184,19 @@ export default function MagiConsensusControl() {
                                                                                         {historyDetail.question || "—"}
                                                                                 </div>
                                                                         </div>
+                                                                        {historyDetail.liveUrl && (
+                                                                                <div className="bg-black border border-white/10 rounded p-3">
+                                                                                        <div className="title-text text-sm font-semibold text-white/80">Live URL</div>
+                                                                                        <a
+                                                                                                href={historyDetail.liveUrl}
+                                                                                                target="_blank"
+                                                                                                rel="noreferrer noopener"
+                                                                                                className="ui-text text-sm text-magiBlue hover:underline break-all mt-2 inline-block"
+                                                                                        >
+                                                                                                {historyDetail.liveUrl}
+                                                                                        </a>
+                                                                                </div>
+                                                                        )}
                                                                         <div className="bg-black border border-white/10 rounded p-3">
                                                                                 <div className="title-text text-sm font-semibold text-white/80">Final Consensus</div>
                                                                                 {historyDetail.finalMessage ? (
@@ -1296,13 +1417,18 @@ export default function MagiConsensusControl() {
 												className="w-full text-left bg-white/10 hover:bg-white/15 border border-white/10 rounded p-2"
 											>
 												<div className="ui-text text-[11px] text-white/50 mb-1">{when}</div>
-												<div className="ui-text text-sm text-white/80 truncate">{s.question}</div>
-												<div className="ui-text text-[11px] mt-1 text-white/50">Status: {s.status}</div>
-											</button>
-										</li>
-									);
-								})}
-							</ul>
+                                                                                                <div className="ui-text text-sm text-white/80 truncate">{s.question}</div>
+                                                                                                <div className="ui-text text-[11px] mt-1 text-white/50">Status: {s.status}</div>
+                                                                                                {s.live_url && (
+                                                                                                        <div className="ui-text text-[11px] mt-1 text-magiBlue/80 truncate">
+                                                                                                                Live URL: {s.live_url}
+                                                                                                        </div>
+                                                                                                )}
+                                                                                        </button>
+                                                                                </li>
+                                                                        );
+                                                                })}
+                                                        </ul>
 						)}
 					</div>
 				)}

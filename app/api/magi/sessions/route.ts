@@ -11,9 +11,9 @@ export async function GET(req: NextRequest) {
 			return new Response(JSON.stringify({ ok: false, error: "Missing userId" }), { status: 400 });
 		}
 		const supabase = getSupabaseServer();
-		const { data, error } = await supabase
-			.from("magi_sessions")
-			.select("id, user_id, question, artifact_id, status, error, created_at, updated_at")
+                const { data, error } = await supabase
+                        .from("magi_sessions")
+                        .select("id, user_id, question, artifact_id, live_url, status, error, created_at, updated_at")
 			.eq("user_id", userId)
 			.order("created_at", { ascending: false });
 		if (error) {

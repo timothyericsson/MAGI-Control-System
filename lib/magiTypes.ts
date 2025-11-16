@@ -13,16 +13,17 @@ export interface MagiAgent {
 }
 
 export interface MagiSession {
-	id: string;
-	user_id: string;
-	question: string;
-	artifact_id?: string | null;
-	status: MagiSessionStatus;
-	error: string | null;
-	created_at: string;
-	updated_at: string;
-	finalMessageId?: number | null;
-	consensusSummary?: string | null;
+        id: string;
+        user_id: string;
+        question: string;
+        artifact_id?: string | null;
+        live_url?: string | null;
+        status: MagiSessionStatus;
+        error: string | null;
+        created_at: string;
+        updated_at: string;
+        finalMessageId?: number | null;
+        consensusSummary?: string | null;
 }
 
 export interface MagiMessage {
@@ -58,6 +59,7 @@ export interface CreateSessionRequestBody {
         question: string;
         userId?: string;
         artifactId?: string;
+        liveUrl?: string;
         keys?: {
                 openai?: string;
                 anthropic?: string;
