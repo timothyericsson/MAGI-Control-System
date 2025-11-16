@@ -2,16 +2,17 @@
 
 import { NextRequest } from "next/server";
 import {
-        addMessage,
-        addVote,
-        getSessionFull,
-        listAgents,
-        setSessionStatus,
-        upsertConsensus,
+addMessage,
+addVote,
+getSessionFull,
+listAgents,
+setSessionStatus,
+upsertConsensus,
 } from "@/lib/magiRepo";
 import { canonicalModelFor } from "@/lib/magiModels";
 import { buildArtifactContextText } from "@/lib/codeArtifacts";
 import { buildLiveUrlContext } from "@/lib/liveSiteContext";
+import { performLiveHttpRequest } from "@/lib/liveHttpProxy";
 import type {
         MagiAgent,
         MagiMessage,
@@ -25,9 +26,80 @@ import type {
 type ProviderKeyMap = { openai?: string; anthropic?: string; grok?: string; xai?: string };
 
 type AgentChatResult = {
-        content: string;
-        providerUsed: "openai" | "anthropic" | "grok";
+content: string;
+providerUsed: "openai" | "anthropic" | "grok";
 };
+
+type OpenAIChatMessage = {
+role: "system" | "user" | "assistant" | "tool";
+content: string | any[];
+name?: string;
+tool_call_id?: string;
+tool_calls?:
+| null
+| {
+id: string;
+function: { name: string; arguments: string };
+}[];
+};
+
+const HTTP_TOOL_NAME = "magi_http_request";
+const HTTP_TOOL_DESCRIPTION =
+"Forward a cURL-style HTTP request via MAGI's relay so you can inspect live endpoints while auditing.";
+const MAX_HTTP_TOOL_CALLS = 5;
+
+const HTTP_TOOL_PARAMETERS = {
+type: "object",
+properties: {
+url: { type: "string", description: "Absolute http or https URL to fetch." },
+method: {
+type: "string",
+enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+description: "HTTP method to use (defaults to GET).",
+},
+headers: {
+type: "object",
+additionalProperties: { type: "string" },
+description: "Optional headers to include in the request.",
+},
+body: {
+type: "string",
+description: "Optional UTF-8 request body (use for POST/PUT/PATCH).",
+},
+},
+required: ["url"],
+};
+
+function normalizeHeaderRecord(candidate: unknown): Record<string, string> | undefined {
+if (!candidate || typeof candidate !== "object") return undefined;
+const result: Record<string, string> = {};
+for (const [key, value] of Object.entries(candidate as Record<string, unknown>)) {
+if (typeof value === "string") {
+result[key] = value;
+}
+}
+return Object.keys(result).length ? result : undefined;
+}
+
+function formatToolResultPayload(payload: unknown): string {
+return JSON.stringify(payload, null, 2);
+}
+
+async function runHttpToolCall(rawArgs: any): Promise<string> {
+const url = typeof rawArgs?.url === "string" ? rawArgs.url : "";
+const method = typeof rawArgs?.method === "string" ? rawArgs.method : undefined;
+const headers = normalizeHeaderRecord(rawArgs?.headers);
+const body = typeof rawArgs?.body === "string" ? rawArgs.body : undefined;
+if (!url) {
+return formatToolResultPayload({ ok: false, error: "Request requires a url" });
+}
+try {
+const response = await performLiveHttpRequest({ url, method, headers, body });
+return formatToolResultPayload({ ok: true, response });
+} catch (err: any) {
+return formatToolResultPayload({ ok: false, error: err?.message || "Request failed" });
+}
+}
 
 function keyForAgent(agent: MagiAgent, keys?: ProviderKeyMap): string | undefined {
         if (!keys) return undefined;
@@ -231,138 +303,257 @@ function buildDiagnostics(params: {
 }
 
 async function callOpenAIChat(
-        apiKey: string,
-        model: string,
-        messages: { role: string; content: string }[],
-        userLabel?: string
+apiKey: string,
+model: string,
+messages: OpenAIChatMessage[],
+userLabel?: string,
+options?: { enableHttpTool?: boolean }
 ): Promise<string> {
-        if (!model) {
-                throw new Error("openai model not specified");
-        }
-        const res = await fetch("https://api.openai.com/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                        "Authorization": `Bearer ${apiKey}`,
-                        "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                        model,
-                        messages,
-                        temperature: 0.3,
-                        ...(userLabel ? { user: userLabel } : {}),
-                }),
-        });
-        if (!res.ok) throw new Error(`openai error ${res.status}`);
-        const data = await res.json();
-        const txt = data?.choices?.[0]?.message?.content ?? "";
-        return String(txt).trim();
+return callOpenAICompatibleChat({
+apiKey,
+model,
+messages,
+userLabel,
+baseUrl: "https://api.openai.com/v1/chat/completions",
+enableHttpTool: options?.enableHttpTool ?? false,
+});
 }
 
 async function callXAIChat(
-        apiKey: string,
-        model: string,
-        messages: { role: string; content: string }[],
-        userLabel?: string
+apiKey: string,
+model: string,
+messages: OpenAIChatMessage[],
+userLabel?: string,
+options?: { enableHttpTool?: boolean }
 ): Promise<string> {
-        // xAI is OpenAI-compatible for chat completions
-        if (!model) {
-                throw new Error("xai model not specified");
-        }
-        const res = await fetch("https://api.x.ai/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                        "Authorization": `Bearer ${apiKey}`,
-                        "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                        model,
-                        messages,
-                        temperature: 0.3,
-                        ...(userLabel ? { user: userLabel } : {}),
-                }),
-        });
-        if (!res.ok) throw new Error(`xai error ${res.status}`);
-        const data = await res.json();
-        const txt = data?.choices?.[0]?.message?.content ?? "";
-        return String(txt).trim();
+return callOpenAICompatibleChat({
+apiKey,
+model,
+messages,
+userLabel,
+baseUrl: "https://api.x.ai/v1/chat/completions",
+enableHttpTool: options?.enableHttpTool ?? false,
+});
+}
+
+async function callOpenAICompatibleChat(params: {
+apiKey: string;
+model: string;
+messages: OpenAIChatMessage[];
+userLabel?: string;
+baseUrl: string;
+enableHttpTool: boolean;
+}): Promise<string> {
+const { apiKey, model, messages, userLabel, baseUrl, enableHttpTool } = params;
+if (!model) {
+throw new Error("model not specified");
+}
+const conversation: OpenAIChatMessage[] = messages.map((m) => ({ ...m }));
+let toolCalls = 0;
+while (true) {
+const payload: Record<string, unknown> = {
+model,
+messages: conversation,
+temperature: 0.3,
+};
+if (userLabel) payload.user = userLabel;
+if (enableHttpTool) {
+payload.tools = [
+{
+type: "function",
+function: {
+name: HTTP_TOOL_NAME,
+description: HTTP_TOOL_DESCRIPTION,
+parameters: HTTP_TOOL_PARAMETERS,
+},
+},
+];
+}
+const res = await fetch(baseUrl, {
+method: "POST",
+headers: {
+Authorization: `Bearer ${apiKey}`,
+"Content-Type": "application/json",
+},
+body: JSON.stringify(payload),
+});
+if (!res.ok) {
+throw new Error(`${baseUrl.includes("x.ai") ? "xai" : "openai"} error ${res.status}`);
+}
+const data = await res.json();
+const choice = data?.choices?.[0];
+const message = choice?.message;
+if (!message) {
+return "";
+}
+if (enableHttpTool && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+conversation.push(message as OpenAIChatMessage);
+for (const call of message.tool_calls) {
+if (!call?.function || call.function.name !== HTTP_TOOL_NAME) {
+continue;
+}
+toolCalls += 1;
+let args: any = {};
+try {
+args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+} catch {
+args = {};
+}
+let content = "";
+if (toolCalls > MAX_HTTP_TOOL_CALLS) {
+content = formatToolResultPayload({ ok: false, error: "HTTP relay tool call limit reached" });
+} else {
+content = await runHttpToolCall(args);
+}
+conversation.push({
+role: "tool",
+content,
+tool_call_id: call.id,
+});
+}
+continue;
+}
+const rawContent = Array.isArray(message.content)
+? message.content
+.map((part: any) => {
+if (typeof part === "string") return part;
+if (part && typeof part.text === "string") return part.text;
+return "";
+})
+.filter(Boolean)
+.join("\n\n")
+: String(message.content ?? "");
+const txt = rawContent.trim();
+conversation.push({ role: "assistant", content: txt });
+return txt;
+}
 }
 
 async function callAnthropic(
-        apiKey: string,
-        model: string | null | undefined,
-        messages: { role: "user" | "assistant" | "system"; content: string }[],
-        userLabel?: string
+apiKey: string,
+model: string | null | undefined,
+messages: { role: "user" | "assistant" | "system"; content: string }[],
+userLabel?: string,
+options?: { enableHttpTool?: boolean }
 ): Promise<string> {
-        const resolvedModel = canonicalModelFor("anthropic", model);
-        // Convert to Anthropic messages API format
-        const sys = messages.find((m) => m.role === "system")?.content;
-        const userTurns = messages.filter((m) => m.role !== "system").map((m) => ({
-                role: m.role === "assistant" ? "assistant" : "user",
-                content: [{ type: "text", text: m.content }],
-        }));
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-                method: "POST",
-                headers: {
-                        "x-api-key": apiKey,
-                        "anthropic-version": "2023-06-01",
-                        "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                        model: resolvedModel,
-                        max_tokens: 400,
-                        system: sys,
-                        messages: userTurns,
-                        temperature: 0.3,
-                        ...(userLabel ? { metadata: { user_id: userLabel } } : {}),
-                }),
-        });
-        if (!res.ok) {
-                let detail = "";
-                try {
-                        detail = await res.text();
-                } catch {
-                        detail = "";
-                }
-                const trimmedDetail = detail.trim();
-                throw new Error(`anthropic error ${res.status}${trimmedDetail ? `: ${trimmedDetail}` : ""}`);
-        }
-        const data = await res.json();
-        const textBlocks = Array.isArray(data?.content)
-                ? data.content.filter(
-                          (block: any) =>
-                                  block &&
-                                  typeof block === "object" &&
-                                  block.type === "text" &&
-                                  typeof block.text === "string"
-                  )
-                : [];
-        const combinedText = textBlocks.map((block: any) => block.text.trim()).filter(Boolean).join("\n\n");
-        return combinedText || "";
+const resolvedModel = canonicalModelFor("anthropic", model);
+const systemPrompt = messages.find((m) => m.role === "system")?.content;
+const baseTurns = messages.filter((m) => m.role !== "system").map((m) => ({
+role: m.role === "assistant" ? "assistant" : "user",
+content: [{ type: "text", text: m.content }],
+}));
+const conversation: any[] = baseTurns.slice();
+const includeTool = options?.enableHttpTool ?? false;
+const tools = includeTool
+? [
+{
+name: HTTP_TOOL_NAME,
+description: HTTP_TOOL_DESCRIPTION,
+input_schema: HTTP_TOOL_PARAMETERS,
+},
+]
+: undefined;
+let toolCalls = 0;
+while (true) {
+const payload: Record<string, unknown> = {
+model: resolvedModel,
+max_tokens: 400,
+messages: conversation,
+temperature: 0.3,
+};
+if (systemPrompt) payload.system = systemPrompt;
+if (tools) payload.tools = tools;
+if (userLabel) payload.metadata = { user_id: userLabel };
+const res = await fetch("https://api.anthropic.com/v1/messages", {
+method: "POST",
+headers: {
+"x-api-key": apiKey,
+"anthropic-version": "2023-06-01",
+"Content-Type": "application/json",
+},
+body: JSON.stringify(payload),
+});
+if (!res.ok) {
+let detail = "";
+try {
+detail = await res.text();
+} catch {
+detail = "";
+}
+const trimmedDetail = detail.trim();
+throw new Error(`anthropic error ${res.status}${trimmedDetail ? `: ${trimmedDetail}` : ""}`);
+}
+const data = await res.json();
+const contentBlocks: any[] = Array.isArray(data?.content) ? data.content : [];
+conversation.push({ role: "assistant", content: contentBlocks });
+if (tools) {
+const toolUses = contentBlocks.filter(
+(block) => block && block.type === "tool_use" && block.name === HTTP_TOOL_NAME
+);
+if (toolUses.length > 0) {
+for (const toolUse of toolUses) {
+toolCalls += 1;
+const args = toolUse?.input ?? {};
+let content = "";
+if (toolCalls > MAX_HTTP_TOOL_CALLS) {
+content = formatToolResultPayload({ ok: false, error: "HTTP relay tool call limit reached" });
+} else {
+content = await runHttpToolCall(args);
+}
+conversation.push({
+role: "user",
+content: [
+{
+type: "tool_result",
+tool_use_id: toolUse.id,
+content,
+},
+],
+});
+}
+continue;
+}
+}
+const textBlocks = contentBlocks
+.filter((block) => block && block.type === "text" && typeof block.text === "string")
+.map((block) => block.text.trim())
+.filter(Boolean);
+return textBlocks.join("\n\n");
+}
 }
 
 async function agentChat(
-        agent: MagiAgent,
-        keys: ProviderKeyMap | undefined,
-        messages: { role: "system" | "user" | "assistant"; content: string }[]
+agent: MagiAgent,
+keys: ProviderKeyMap | undefined,
+messages: { role: "system" | "user" | "assistant"; content: string }[],
+options?: { enableHttpTool?: boolean }
 ): Promise<AgentChatResult> {
-        const model = canonicalModelFor(agent.provider, agent.model);
+const model = canonicalModelFor(agent.provider, agent.model);
 
-        async function invokePrimary(provider: "openai" | "anthropic" | "grok", apiKey: string, label: string) {
-                if (provider === "openai") {
-                        const txt = await withTimeout(callOpenAIChat(apiKey, model, messages, agent.slug), 20000, label);
-                        return { content: txt, providerUsed: "openai" as const };
-                }
-                if (provider === "anthropic") {
-                        const txt = await withTimeout(
-                                callAnthropic(apiKey, model, messages as any, agent.slug),
-                                20000,
-                                label
-                        );
-                        return { content: txt, providerUsed: "anthropic" as const };
-                }
-                const txt = await withTimeout(callXAIChat(apiKey, model, messages, agent.slug), 20000, label);
-                return { content: txt, providerUsed: "grok" as const };
-        }
+async function invokePrimary(provider: "openai" | "anthropic" | "grok", apiKey: string, label: string) {
+if (provider === "openai") {
+const txt = await withTimeout(
+callOpenAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
+20000,
+label
+);
+return { content: txt, providerUsed: "openai" as const };
+}
+if (provider === "anthropic") {
+const txt = await withTimeout(
+callAnthropic(apiKey, model, messages as any, agent.slug, options),
+20000,
+label
+);
+return { content: txt, providerUsed: "anthropic" as const };
+}
+const txt = await withTimeout(
+callXAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
+20000,
+label
+);
+return { content: txt, providerUsed: "grok" as const };
+}
 
         const primaryKey = keyForAgent(agent, keys);
         let primaryError: Error | null = null;
@@ -413,9 +604,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                         for (const a of agents) {
                                 let chatResult: AgentChatResult | null = null;
                                 try {
-                                        const systemPrompts = [
-                                                `You are ${a.name}. Provide a concise, security-focused audit response. Highlight high-risk vulnerabilities, abuse cases, and hardening steps. Keep it under 160 words.`,
-                                        ];
+const systemPrompts = [
+`You are ${a.name}. Provide a concise, security-focused audit response. Highlight high-risk vulnerabilities, abuse cases, and hardening steps. Keep it under 160 words.`,
+];
                                         if (artifactContext) {
                                                 systemPrompts.push(
                                                         "Repository context:\n" +
@@ -425,17 +616,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                                         } else {
                                                 systemPrompts.push("Reference concrete code risks where possible.");
                                         }
-                                        if (liveUrlContext) {
-                                                systemPrompts.push(
-                                                        "Live URL probe results:\n" +
-                                                                liveUrlContext +
-                                                                "\n\nIncorporate any exposed endpoints, headers, or responses into the audit."
-                                                );
-                                        }
-                                        chatResult = await agentChat(a, keys, [
-                                                { role: "system", content: systemPrompts.join("\n\n") },
-                                                { role: "user", content: userQuestion },
-                                        ]);
+if (liveUrlContext) {
+systemPrompts.push(
+"Live URL probe results:\n" +
+liveUrlContext +
+"\n\nIncorporate any exposed endpoints, headers, or responses into the audit."
+);
+}
+systemPrompts.push(
+"You can issue additional HTTP requests using the MAGI curl tool whenever you need to inspect a live endpoint. Always summarize what you learned from each probe."
+);
+chatResult = await agentChat(a, keys, [
+{ role: "system", content: systemPrompts.join("\n\n") },
+{ role: "user", content: userQuestion },
+], { enableHttpTool: true });
                                 } catch (err: any) {
                                         const message = err?.message || "unknown error";
                                         stageEvents.push(`[${a.name}] proposal failed: ${message}`);
