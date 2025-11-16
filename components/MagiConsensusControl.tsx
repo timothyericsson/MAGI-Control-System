@@ -56,6 +56,24 @@ function votesEqual(a: MagiVote[], b: MagiVote[]): boolean {
 
 type Step = "idle" | "creating" | "proposing" | "voting" | "finalizing" | "done" | "error";
 
+function readHttpProbeCount(meta: MagiMessage["meta"]): number | null {
+        if (!meta || typeof meta !== "object") return null;
+        const record = meta as Record<string, unknown>;
+        const raw =
+                record["httpToolCallCount"] ??
+                record["http_tool_call_count"] ??
+                record["httpProbeCount"] ??
+                record["http_probe_count"];
+        if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+        if (typeof raw === "string") {
+                const parsed = Number.parseInt(raw, 10);
+                if (Number.isFinite(parsed)) {
+                        return parsed;
+                }
+        }
+        return null;
+}
+
 type ArtifactState = {
         id: string;
         original_filename: string;
@@ -1249,12 +1267,23 @@ export default function MagiConsensusControl() {
                                                                                                 </div>
                                                                                                 <div className="mt-3 space-y-3">
                                                                                                         {agentProposals.length > 0 ? (
-                                                                                                                agentProposals.map((proposal) => (
-                                                                                                                        <div key={proposal.id} className="bg-black border border-white/10 rounded p-3">
-                                                                                                                                <div className="ui-text text-[11px] text-white/50">#{proposal.id}</div>
-                                                                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{proposal.content}</div>
-                                                                                                                        </div>
-                                                                                                                ))
+                                                                                                                agentProposals.map((proposal) => {
+                                                                                                                        const httpProbeCount = readHttpProbeCount(proposal.meta);
+                                                                                                                        return (
+                                                                                                                                <div key={proposal.id} className="bg-black border border-white/10 rounded p-3">
+                                                                                                                                        <div className="ui-text text-[11px] text-white/50 flex items-center justify-between gap-2">
+                                                                                                                                                <span>#{proposal.id}</span>
+                                                                                                                                                {httpProbeCount !== null && (
+                                                                                                                                                        <span className="text-[10px] text-white/60">
+                                                                                                                                                                HTTP probes: <span className="text-white/80">{httpProbeCount}</span>
+                                                                                                                                                        </span>
+                                                                                                                                                )}
+                                                                                                                                        </div>
+                                                                                                                                        <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{proposal.content}</div>
+                                                                                                                                </div>
+                                                                                                                        );
+                                                                                                                })
+
                                                                                                         ) : (
                                                                                                                 <div className="ui-text text-sm text-white/50">No proposal recorded.</div>
                                                                                                         )}

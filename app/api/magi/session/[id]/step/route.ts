@@ -26,8 +26,9 @@ import type {
 type ProviderKeyMap = { openai?: string; anthropic?: string; grok?: string; xai?: string };
 
 type AgentChatResult = {
-content: string;
-providerUsed: "openai" | "anthropic" | "grok";
+        content: string;
+        providerUsed: "openai" | "anthropic" | "grok";
+        httpToolCallCount: number;
 };
 
 type OpenAIChatMessage = {
@@ -303,52 +304,52 @@ function buildDiagnostics(params: {
 }
 
 async function callOpenAIChat(
-apiKey: string,
-model: string,
-messages: OpenAIChatMessage[],
-userLabel?: string,
-options?: { enableHttpTool?: boolean }
-): Promise<string> {
-return callOpenAICompatibleChat({
-apiKey,
-model,
-messages,
-userLabel,
-baseUrl: "https://api.openai.com/v1/chat/completions",
-enableHttpTool: options?.enableHttpTool ?? false,
-});
+        apiKey: string,
+        model: string,
+        messages: OpenAIChatMessage[],
+        userLabel?: string,
+        options?: { enableHttpTool?: boolean }
+): Promise<{ content: string; httpToolCallCount: number }> {
+        return callOpenAICompatibleChat({
+                apiKey,
+                model,
+                messages,
+                userLabel,
+                baseUrl: "https://api.openai.com/v1/chat/completions",
+                enableHttpTool: options?.enableHttpTool ?? false,
+        });
 }
 
 async function callXAIChat(
-apiKey: string,
-model: string,
-messages: OpenAIChatMessage[],
-userLabel?: string,
-options?: { enableHttpTool?: boolean }
-): Promise<string> {
-return callOpenAICompatibleChat({
-apiKey,
-model,
-messages,
-userLabel,
-baseUrl: "https://api.x.ai/v1/chat/completions",
-enableHttpTool: options?.enableHttpTool ?? false,
-});
+        apiKey: string,
+        model: string,
+        messages: OpenAIChatMessage[],
+        userLabel?: string,
+        options?: { enableHttpTool?: boolean }
+): Promise<{ content: string; httpToolCallCount: number }> {
+        return callOpenAICompatibleChat({
+                apiKey,
+                model,
+                messages,
+                userLabel,
+                baseUrl: "https://api.x.ai/v1/chat/completions",
+                enableHttpTool: options?.enableHttpTool ?? false,
+        });
 }
 
 async function callOpenAICompatibleChat(params: {
-apiKey: string;
-model: string;
-messages: OpenAIChatMessage[];
-userLabel?: string;
-baseUrl: string;
-enableHttpTool: boolean;
-}): Promise<string> {
-const { apiKey, model, messages, userLabel, baseUrl, enableHttpTool } = params;
-if (!model) {
-throw new Error("model not specified");
-}
-const conversation: OpenAIChatMessage[] = messages.map((m) => ({ ...m }));
+        apiKey: string;
+        model: string;
+        messages: OpenAIChatMessage[];
+        userLabel?: string;
+        baseUrl: string;
+        enableHttpTool: boolean;
+}): Promise<{ content: string; httpToolCallCount: number }> {
+        const { apiKey, model, messages, userLabel, baseUrl, enableHttpTool } = params;
+        if (!model) {
+                throw new Error("model not specified");
+        }
+        const conversation: OpenAIChatMessage[] = messages.map((m) => ({ ...m }));
 let toolCalls = 0;
 while (true) {
 const payload: Record<string, unknown> = {
@@ -423,24 +424,24 @@ return "";
 .filter(Boolean)
 .join("\n\n")
 : String(message.content ?? "");
-const txt = rawContent.trim();
-conversation.push({ role: "assistant", content: txt });
-return txt;
-}
+                const txt = rawContent.trim();
+                conversation.push({ role: "assistant", content: txt });
+                return { content: txt, httpToolCallCount: toolCalls };
+        }
 }
 
 async function callAnthropic(
-apiKey: string,
-model: string | null | undefined,
-messages: { role: "user" | "assistant" | "system"; content: string }[],
-userLabel?: string,
-options?: { enableHttpTool?: boolean }
-): Promise<string> {
-const resolvedModel = canonicalModelFor("anthropic", model);
-const systemPrompt = messages.find((m) => m.role === "system")?.content;
-const baseTurns = messages.filter((m) => m.role !== "system").map((m) => ({
-role: m.role === "assistant" ? "assistant" : "user",
-content: [{ type: "text", text: m.content }],
+        apiKey: string,
+        model: string | null | undefined,
+        messages: { role: "user" | "assistant" | "system"; content: string }[],
+        userLabel?: string,
+        options?: { enableHttpTool?: boolean }
+): Promise<{ content: string; httpToolCallCount: number }> {
+        const resolvedModel = canonicalModelFor("anthropic", model);
+        const systemPrompt = messages.find((m) => m.role === "system")?.content;
+        const baseTurns = messages.filter((m) => m.role !== "system").map((m) => ({
+                role: m.role === "assistant" ? "assistant" : "user",
+                content: [{ type: "text", text: m.content }],
 }));
 const conversation: any[] = baseTurns.slice();
 const includeTool = options?.enableHttpTool ?? false;
@@ -514,46 +515,46 @@ content,
 continue;
 }
 }
-const textBlocks = contentBlocks
-.filter((block) => block && block.type === "text" && typeof block.text === "string")
-.map((block) => block.text.trim())
-.filter(Boolean);
-return textBlocks.join("\n\n");
+        const textBlocks = contentBlocks
+                .filter((block) => block && block.type === "text" && typeof block.text === "string")
+                .map((block) => block.text.trim())
+                .filter(Boolean);
+        return { content: textBlocks.join("\n\n"), httpToolCallCount: toolCalls };
 }
 }
 
 async function agentChat(
-agent: MagiAgent,
-keys: ProviderKeyMap | undefined,
-messages: { role: "system" | "user" | "assistant"; content: string }[],
-options?: { enableHttpTool?: boolean }
+        agent: MagiAgent,
+        keys: ProviderKeyMap | undefined,
+        messages: { role: "system" | "user" | "assistant"; content: string }[],
+        options?: { enableHttpTool?: boolean }
 ): Promise<AgentChatResult> {
-const model = canonicalModelFor(agent.provider, agent.model);
+        const model = canonicalModelFor(agent.provider, agent.model);
 
-async function invokePrimary(provider: "openai" | "anthropic" | "grok", apiKey: string, label: string) {
-if (provider === "openai") {
-const txt = await withTimeout(
-callOpenAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
-20000,
-label
-);
-return { content: txt, providerUsed: "openai" as const };
-}
-if (provider === "anthropic") {
-const txt = await withTimeout(
-callAnthropic(apiKey, model, messages as any, agent.slug, options),
-20000,
-label
-);
-return { content: txt, providerUsed: "anthropic" as const };
-}
-const txt = await withTimeout(
-callXAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
-20000,
-label
-);
-return { content: txt, providerUsed: "grok" as const };
-}
+        async function invokePrimary(provider: "openai" | "anthropic" | "grok", apiKey: string, label: string) {
+                if (provider === "openai") {
+                        const { content: txt, httpToolCallCount } = await withTimeout(
+                                callOpenAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
+                                20000,
+                                label
+                        );
+                        return { content: txt, providerUsed: "openai" as const, httpToolCallCount };
+                }
+                if (provider === "anthropic") {
+                        const { content: txt, httpToolCallCount } = await withTimeout(
+                                callAnthropic(apiKey, model, messages as any, agent.slug, options),
+                                20000,
+                                label
+                        );
+                        return { content: txt, providerUsed: "anthropic" as const, httpToolCallCount };
+                }
+                const { content: txt, httpToolCallCount } = await withTimeout(
+                        callXAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
+                        20000,
+                        label
+                );
+                return { content: txt, providerUsed: "grok" as const, httpToolCallCount };
+        }
 
         const primaryKey = keyForAgent(agent, keys);
         let primaryError: Error | null = null;
@@ -651,6 +652,7 @@ chatResult = await agentChat(a, keys, [
                                         stage: "proposal",
                                         fallback: false,
                                         actualProvider,
+                                        httpToolCallCount: chatResult?.httpToolCallCount ?? 0,
                                 };
                                 const message = await addMessage({
                                         sessionId,
