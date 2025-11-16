@@ -28,6 +28,12 @@ type ProviderKeyMap = { openai?: string; anthropic?: string; grok?: string; xai?
 type AgentChatResult = {
 content: string;
 providerUsed: "openai" | "anthropic" | "grok";
+httpRequestCount: number;
+};
+
+type ChatResultWithHttp = {
+content: string;
+httpRequests: number;
 };
 
 type OpenAIChatMessage = {
@@ -308,7 +314,7 @@ model: string,
 messages: OpenAIChatMessage[],
 userLabel?: string,
 options?: { enableHttpTool?: boolean }
-): Promise<string> {
+): Promise<ChatResultWithHttp> {
 return callOpenAICompatibleChat({
 apiKey,
 model,
@@ -325,7 +331,7 @@ model: string,
 messages: OpenAIChatMessage[],
 userLabel?: string,
 options?: { enableHttpTool?: boolean }
-): Promise<string> {
+): Promise<ChatResultWithHttp> {
 return callOpenAICompatibleChat({
 apiKey,
 model,
@@ -343,7 +349,7 @@ messages: OpenAIChatMessage[];
 userLabel?: string;
 baseUrl: string;
 enableHttpTool: boolean;
-}): Promise<string> {
+}): Promise<ChatResultWithHttp> {
 const { apiKey, model, messages, userLabel, baseUrl, enableHttpTool } = params;
 if (!model) {
 throw new Error("model not specified");
@@ -384,7 +390,7 @@ const data = await res.json();
 const choice = data?.choices?.[0];
 const message = choice?.message;
 if (!message) {
-return "";
+return { content: "", httpRequests: toolCalls };
 }
 if (enableHttpTool && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
 conversation.push(message as OpenAIChatMessage);
@@ -425,7 +431,7 @@ return "";
 : String(message.content ?? "");
 const txt = rawContent.trim();
 conversation.push({ role: "assistant", content: txt });
-return txt;
+return { content: txt, httpRequests: toolCalls };
 }
 }
 
@@ -435,7 +441,7 @@ model: string | null | undefined,
 messages: { role: "user" | "assistant" | "system"; content: string }[],
 userLabel?: string,
 options?: { enableHttpTool?: boolean }
-): Promise<string> {
+): Promise<ChatResultWithHttp> {
 const resolvedModel = canonicalModelFor("anthropic", model);
 const systemPrompt = messages.find((m) => m.role === "system")?.content;
 const baseTurns = messages.filter((m) => m.role !== "system").map((m) => ({
@@ -518,7 +524,7 @@ const textBlocks = contentBlocks
 .filter((block) => block && block.type === "text" && typeof block.text === "string")
 .map((block) => block.text.trim())
 .filter(Boolean);
-return textBlocks.join("\n\n");
+return { content: textBlocks.join("\n\n"), httpRequests: toolCalls };
 }
 }
 
@@ -532,27 +538,27 @@ const model = canonicalModelFor(agent.provider, agent.model);
 
 async function invokePrimary(provider: "openai" | "anthropic" | "grok", apiKey: string, label: string) {
 if (provider === "openai") {
-const txt = await withTimeout(
+const result = await withTimeout(
 callOpenAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
 20000,
 label
 );
-return { content: txt, providerUsed: "openai" as const };
+return { content: result.content, providerUsed: "openai" as const, httpRequestCount: result.httpRequests };
 }
 if (provider === "anthropic") {
-const txt = await withTimeout(
+const result = await withTimeout(
 callAnthropic(apiKey, model, messages as any, agent.slug, options),
 20000,
 label
 );
-return { content: txt, providerUsed: "anthropic" as const };
+return { content: result.content, providerUsed: "anthropic" as const, httpRequestCount: result.httpRequests };
 }
-const txt = await withTimeout(
+const result = await withTimeout(
 callXAIChat(apiKey, model, messages as OpenAIChatMessage[], agent.slug, options),
 20000,
 label
 );
-return { content: txt, providerUsed: "grok" as const };
+return { content: result.content, providerUsed: "grok" as const, httpRequestCount: result.httpRequests };
 }
 
         const primaryKey = keyForAgent(agent, keys);
@@ -646,12 +652,13 @@ chatResult = await agentChat(a, keys, [
                                         throw new Error(`${a.name} proposal returned empty response`);
                                 }
 
-                                const meta: Record<string, unknown> = {
-                                        provider: a.provider,
-                                        stage: "proposal",
-                                        fallback: false,
-                                        actualProvider,
-                                };
+const meta: Record<string, unknown> = {
+provider: a.provider,
+stage: "proposal",
+fallback: false,
+actualProvider,
+httpRequestCount: chatResult?.httpRequestCount ?? 0,
+};
                                 const message = await addMessage({
                                         sessionId,
                                         role: "agent_proposal",
