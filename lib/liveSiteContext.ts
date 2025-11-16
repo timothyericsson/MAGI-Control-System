@@ -1,7 +1,7 @@
 import { normalizeLiveUrl } from "@/lib/liveUrl";
 
 const MAX_FETCH_BYTES = 256 * 1024; // 256KB snapshot
-const MAX_CONTEXT_CHARS = 12_000;
+const MAX_CONTEXT_CHARS = 8_000;
 const FETCH_TIMEOUT_MS = 8000;
 
 function stripHtml(html: string): string {

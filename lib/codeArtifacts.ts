@@ -13,8 +13,8 @@ const MAX_TOTAL_CHUNKS = 4000;
 const MAX_CHUNKS_PER_FILE = 64;
 const CHUNK_CHAR_LIMIT = 2800;
 const PRIORITY_SUFFIXES = [".html", ".htm", ".php", ".phtml", ".blade.php", ".ctp"];
-const DEFAULT_CONTEXT_CHAR_BUDGET = 32_000;
-const MAX_CONTEXT_CHUNKS = 1200;
+const DEFAULT_CONTEXT_CHAR_BUDGET = 18_000;
+const MAX_CONTEXT_CHUNKS = 800;
 
 type ChunkLike = {
         file_path: string;
@@ -212,6 +212,8 @@ function selectChunksForContext(
                         .map(([lang]) => lang)
         );
         const keywords = extractKeywords(options.question);
+        const keywordSet = new Set(keywords.map((kw) => kw.toLowerCase()));
+        const keywordArray = Array.from(keywordSet);
         const initialChars = options.initialChars ?? 0;
         const perFileCounts: Record<string, number> = {};
         const snippets: string[] = [];
@@ -224,6 +226,12 @@ function selectChunksForContext(
                 .map((chunk) => {
                         const lowerPath = chunk.file_path.toLowerCase();
                         const keywordHit = keywords.some((kw) => lowerPath.includes(kw));
+                        const normalizedContent = chunk.content.toLowerCase();
+                        const contentHits = keywordArray.length
+                                ? keywordArray.filter((kw) => normalizedContent.includes(kw))
+                                : [];
+                        const contentHitCount = contentHits.length;
+                        const hasContentHit = contentHitCount > 0;
                         const isPriority = isPriorityPath(chunk.file_path);
                         const isTopFile = topFiles.has(lowerPath);
                         const hasLangBoost = chunk.language ? topLanguages.has(chunk.language) : false;
@@ -231,17 +239,21 @@ function selectChunksForContext(
                         if (isPriority) score += 4;
                         if (isTopFile) score += 3;
                         if (hasLangBoost) score += 2;
-                        if (keywordHit) score += 3;
+                        if (keywordHit) score += 2;
+                        if (hasContentHit) score += Math.min(3, contentHitCount);
                         if (chunk.chunk_index === 0) score += 2;
                         else if (chunk.chunk_index <= 2) score += 1;
                         if (/test|spec|fixture|mock|story/i.test(lowerPath)) score -= 2;
                         if (/readme|docs|changelog/i.test(lowerPath)) score -= 1;
-                        return { chunk, score, keywordHit, isPriority, isTopFile };
+                        return { chunk, score, keywordHit, hasContentHit, isPriority, isTopFile };
                 })
                 .sort((a, b) => {
                         if (b.score !== a.score) return b.score - a.score;
                         return a.chunk.chunk_index - b.chunk.chunk_index;
                 });
+
+        const topScore = candidates[0]?.score ?? 0;
+        const dynamicScoreFloor = topScore > 0 ? Math.max(2, topScore * 0.35) : 0;
 
         for (const candidate of candidates) {
                 if (snippets.length >= MAX_CONTEXT_CHUNKS) {
@@ -249,13 +261,18 @@ function selectChunksForContext(
                         break;
                 }
                 const lowerPath = candidate.chunk.file_path.toLowerCase();
-                const limitBase = candidate.isPriority ? 6 : 3;
-                const limitBoost = (candidate.keywordHit ? 3 : 0) + (candidate.isTopFile ? 2 : 0);
-                const perFileLimit = Math.min(12, limitBase + limitBoost);
+                const limitBase = candidate.keywordHit || candidate.hasContentHit ? 4 : 2;
+                const priorityBoost = candidate.isPriority ? 2 : 0;
+                const topFileBoost = candidate.isTopFile ? 1 : 0;
+                const perFileLimit = Math.min(8, limitBase + priorityBoost + topFileBoost);
                 const currentCount = perFileCounts[lowerPath] ?? 0;
                 if (currentCount >= perFileLimit) {
                         truncated = true;
                         continue;
+                }
+                if (snippets.length >= 8 && candidate.score < dynamicScoreFloor) {
+                        truncated = true;
+                        break;
                 }
                 const header = `File: ${candidate.chunk.file_path} [chunk ${candidate.chunk.chunk_index + 1}]`;
                 const body = candidate.chunk.content.trim();
