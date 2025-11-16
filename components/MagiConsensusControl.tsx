@@ -1251,9 +1251,32 @@ export default function MagiConsensusControl() {
                                                                                                         {agentProposals.length > 0 ? (
                                                                                                                 agentProposals.map((proposal) => (
                                                                                                                         <div key={proposal.id} className="bg-black border border-white/10 rounded p-3">
-                                                                                                                                <div className="ui-text text-[11px] text-white/50">#{proposal.id}</div>
-                                                                                                                                <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{proposal.content}</div>
-                                                                                                                        </div>
+                                                                                                                                {(() => {
+                                                                                                                                        const meta =
+                                                                                                                                                proposal && typeof proposal.meta === "object"
+                                                                                                                                                        ? (proposal.meta as Record<string, unknown>)
+                                                                                                                                                        : {};
+                                                                                                                                        const rawCount = meta?.httpToolCount;
+                                                                                                                                        let httpToolCount = 0;
+                                                                                                                                        if (typeof rawCount === "number" && Number.isFinite(rawCount)) {
+                                                                                                                                                httpToolCount = rawCount;
+                                                                                                                                        } else if (typeof rawCount === "string") {
+                                                                                                                                                const parsed = Number.parseInt(rawCount, 10);
+                                                                                                                                                if (Number.isFinite(parsed)) {
+                                                                                                                                                        httpToolCount = parsed;
+                                                                                                                                                }
+                                                                                                                                        }
+                                                                                                                                        return (
+                                                                                                                                                <div className="flex items-center justify-between gap-3">
+                                                                                                                                                        <div className="ui-text text-[11px] text-white/50">#{proposal.id}</div>
+                                                                                                                                                        <div className="ui-text text-[10px] uppercase tracking-wide text-white/40">
+                                                                                                                                                                HTTP probes: <span className="text-white/70">{httpToolCount}</span>
+                                                                                                                                                        </div>
+                                                                                                                                                </div>
+                                                                                                                                        );
+                                                                                                                                })()}
+                                                                                                                               <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">{proposal.content}</div>
+                                                                                                                       </div>
                                                                                                                 ))
                                                                                                         ) : (
                                                                                                                 <div className="ui-text text-sm text-white/50">No proposal recorded.</div>
