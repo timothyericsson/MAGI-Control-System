@@ -882,22 +882,39 @@ export default function MagiConsensusControl() {
                 return top.length ? top.join(", ") : null;
         }, [artifact?.status, artifactManifest]);
 
-        const artifactFileSummary = useMemo(() => {
-                if (!artifactManifest || artifact?.status !== "ready") return null;
-                const topFiles = Array.isArray(artifactManifest.topFiles)
-                        ? (artifactManifest.topFiles as Array<Record<string, any>>)
-                        : [];
+const artifactFileSummary = useMemo(() => {
+if (!artifactManifest || artifact?.status !== "ready") return null;
+const topFiles = Array.isArray(artifactManifest.topFiles)
+? (artifactManifest.topFiles as Array<Record<string, any>>)
+: [];
                 if (!topFiles.length) return null;
-                return topFiles
-                        .slice(0, 3)
-                        .map((entry) => {
-                                const path = typeof entry.path === "string" ? entry.path : "";
-                                const lang = typeof entry.language === "string" ? entry.language : null;
-                                return lang ? `${path} (${lang})` : path;
-                        })
-                        .filter(Boolean)
-                        .join(", ");
-        }, [artifact?.status, artifactManifest]);
+return topFiles
+.slice(0, 3)
+.map((entry) => {
+const path = typeof entry.path === "string" ? entry.path : "";
+const lang = typeof entry.language === "string" ? entry.language : null;
+return lang ? `${path} (${lang})` : path;
+})
+.filter(Boolean)
+.join(", ");
+}, [artifact?.status, artifactManifest]);
+
+const artifactTokenSummary = useMemo(() => {
+if (!artifactManifest || artifact?.status !== "ready") return null;
+const summary = artifactManifest.tokenSummary as
+| { stored?: number; approxContext?: number; chunks?: number }
+| undefined;
+if (!summary) return null;
+const parts: string[] = [];
+if (typeof summary.stored === "number") {
+parts.push(`Stored: ~${summary.stored.toLocaleString()} tokens`);
+}
+if (typeof summary.approxContext === "number" && summary.approxContext > 0) {
+parts.push(`Prompt use: ~${summary.approxContext.toLocaleString()} tokens`);
+}
+if (parts.length === 0) return null;
+return parts.join(" • ");
+}, [artifact?.status, artifactManifest]);
 
         const liveUrlStatusMessage = useMemo(() => {
                 if (liveUrlError || !normalizedLiveUrl) return null;
@@ -1026,11 +1043,16 @@ export default function MagiConsensusControl() {
                                                                         Languages: {artifactLanguageSummary}
                                                                 </div>
                                                         )}
-                                                        {artifactFileSummary && (
-                                                                <div className="ui-text text-[11px] text-white/60 mt-1">
-                                                                        Key files: {artifactFileSummary}
-                                                                </div>
-                                                        )}
+{artifactFileSummary && (
+<div className="ui-text text-[11px] text-white/60 mt-1">
+Key files: {artifactFileSummary}
+</div>
+)}
+{artifactTokenSummary && (
+<div className="ui-text text-[11px] text-white/60 mt-1">
+Token budget: {artifactTokenSummary}
+</div>
+)}
                                                 </div>
                                         ) : (
                                                 <p className="ui-text text-xs text-white/50 mt-2">
