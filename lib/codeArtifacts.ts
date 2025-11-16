@@ -13,6 +13,25 @@ const MAX_TOTAL_CHUNKS = 4000;
 const MAX_CHUNKS_PER_FILE = 64;
 const CHUNK_CHAR_LIMIT = 2800;
 const PRIORITY_SUFFIXES = [".html", ".htm", ".php", ".phtml", ".blade.php", ".ctp"];
+const DEFAULT_CONTEXT_CHAR_BUDGET = 32_000;
+const MAX_CONTEXT_CHUNKS = 1200;
+
+type ChunkLike = {
+        file_path: string;
+        chunk_index: number;
+        language: string | null;
+        content: string;
+        token_estimate: number | null;
+};
+
+type ChunkSelectionResult = {
+        snippets: string[];
+        approxTokens: number;
+        chunkCount: number;
+        fileCount: number;
+        truncated: boolean;
+        totalCandidates: number;
+};
 
 export type ArtifactStatus = "uploaded" | "processing" | "ready" | "failed";
 
@@ -112,13 +131,155 @@ function isSkippablePath(filePath: string): boolean {
 }
 
 function isLikelyBinary(buf: Buffer): boolean {
-	const sample = buf.subarray(0, Math.min(buf.length, 4096));
-	let suspicious = 0;
-	for (const byte of sample) {
-		if (byte === 0) return true;
-		if (byte < 7 || (byte > 13 && byte < 32)) suspicious += 1;
-	}
-	return sample.length > 0 && suspicious / sample.length > 0.25;
+        const sample = buf.subarray(0, Math.min(buf.length, 4096));
+        let suspicious = 0;
+        for (const byte of sample) {
+                if (byte === 0) return true;
+                if (byte < 7 || (byte > 13 && byte < 32)) suspicious += 1;
+        }
+        return sample.length > 0 && suspicious / sample.length > 0.25;
+}
+
+function extractKeywords(question?: string | null): string[] {
+        if (!question || typeof question !== "string") return [];
+        const matches = question.toLowerCase().match(/[a-z0-9_]{4,}/g);
+        if (!matches) return [];
+        const unique = Array.from(new Set(matches));
+        return unique.slice(0, 32);
+}
+
+function buildManifestSummaryLines(
+        artifact: MagiCodeArtifact,
+        manifestSummary: Record<string, any>
+): string[] {
+        const manifestLines: string[] = [];
+        manifestLines.push(`Uploaded bundle: ${artifact.original_filename}`);
+        if (typeof manifestSummary.totalFiles === "number") {
+                manifestLines.push(
+                        `Files processed: ${manifestSummary.processedFiles ?? manifestSummary.totalFiles} (skipped ${
+                                manifestSummary.skippedFiles ?? 0
+                        })`
+                );
+        }
+        if (manifestSummary.languages && typeof manifestSummary.languages === "object") {
+                const topLangs = Object.entries(manifestSummary.languages as Record<string, number>)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 5)
+                        .map(([lang, count]) => `${lang}(${count})`);
+                if (topLangs.length) {
+                        manifestLines.push(`Languages: ${topLangs.join(", ")}`);
+                }
+        }
+        if (Array.isArray(manifestSummary.topFiles)) {
+                const topFiles = (manifestSummary.topFiles as Array<Record<string, any>>)
+                        .slice(0, 5)
+                        .map((f: any) => `${f.path} (${f.language || "text"})`)
+                        .join("; ");
+                if (topFiles) manifestLines.push(`Key files: ${topFiles}`);
+        }
+        return manifestLines;
+}
+
+type SelectionOptions = {
+        maxChars: number;
+        question?: string;
+        initialChars?: number;
+};
+
+function selectChunksForContext(
+        chunks: ChunkLike[],
+        manifestSummary: Record<string, any>,
+        options: SelectionOptions
+): ChunkSelectionResult {
+        if (!chunks.length) {
+                return { snippets: [], approxTokens: 0, chunkCount: 0, fileCount: 0, truncated: false, totalCandidates: 0 };
+        }
+
+        const topFiles = Array.isArray(manifestSummary.topFiles)
+                ? new Set(
+                                (manifestSummary.topFiles as Array<Record<string, any>>)
+                                        .map((entry) => (typeof entry.path === "string" ? entry.path.toLowerCase() : ""))
+                                        .filter(Boolean)
+                        )
+                : new Set<string>();
+        const languageEntries = manifestSummary.languages && typeof manifestSummary.languages === "object"
+                ? Object.entries(manifestSummary.languages as Record<string, number>)
+                : [];
+        const topLanguages = new Set(
+                languageEntries
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 4)
+                        .map(([lang]) => lang)
+        );
+        const keywords = extractKeywords(options.question);
+        const initialChars = options.initialChars ?? 0;
+        const perFileCounts: Record<string, number> = {};
+        const snippets: string[] = [];
+        let totalChars = initialChars;
+        let approxTokens = 0;
+        let truncated = false;
+        const selectedFiles = new Set<string>();
+
+        const candidates = chunks
+                .map((chunk) => {
+                        const lowerPath = chunk.file_path.toLowerCase();
+                        const keywordHit = keywords.some((kw) => lowerPath.includes(kw));
+                        const isPriority = isPriorityPath(chunk.file_path);
+                        const isTopFile = topFiles.has(lowerPath);
+                        const hasLangBoost = chunk.language ? topLanguages.has(chunk.language) : false;
+                        let score = 1;
+                        if (isPriority) score += 4;
+                        if (isTopFile) score += 3;
+                        if (hasLangBoost) score += 2;
+                        if (keywordHit) score += 3;
+                        if (chunk.chunk_index === 0) score += 2;
+                        else if (chunk.chunk_index <= 2) score += 1;
+                        if (/test|spec|fixture|mock|story/i.test(lowerPath)) score -= 2;
+                        if (/readme|docs|changelog/i.test(lowerPath)) score -= 1;
+                        return { chunk, score, keywordHit, isPriority, isTopFile };
+                })
+                .sort((a, b) => {
+                        if (b.score !== a.score) return b.score - a.score;
+                        return a.chunk.chunk_index - b.chunk.chunk_index;
+                });
+
+        for (const candidate of candidates) {
+                if (snippets.length >= MAX_CONTEXT_CHUNKS) {
+                        truncated = true;
+                        break;
+                }
+                const lowerPath = candidate.chunk.file_path.toLowerCase();
+                const limitBase = candidate.isPriority ? 6 : 3;
+                const limitBoost = (candidate.keywordHit ? 3 : 0) + (candidate.isTopFile ? 2 : 0);
+                const perFileLimit = Math.min(12, limitBase + limitBoost);
+                const currentCount = perFileCounts[lowerPath] ?? 0;
+                if (currentCount >= perFileLimit) {
+                        truncated = true;
+                        continue;
+                }
+                const header = `File: ${candidate.chunk.file_path} [chunk ${candidate.chunk.chunk_index + 1}]`;
+                const body = candidate.chunk.content.trim();
+                if (!body) continue;
+                const snippet = `${header}\n${body}`;
+                if (totalChars + snippet.length > options.maxChars) {
+                        truncated = true;
+                        break;
+                }
+                snippets.push(snippet);
+                perFileCounts[lowerPath] = currentCount + 1;
+                totalChars += snippet.length + 4;
+                approxTokens += candidate.chunk.token_estimate ?? estimateTokens(candidate.chunk.content);
+                selectedFiles.add(lowerPath);
+        }
+
+        return {
+                snippets,
+                approxTokens,
+                chunkCount: snippets.length,
+                fileCount: selectedFiles.size,
+                truncated,
+                totalCandidates: candidates.length,
+        };
 }
 
 function chunkContent(content: string): string[] {
@@ -231,60 +392,64 @@ export async function listArtifactChunks(artifactId: string, limit = 40, languag
 	return (data as unknown as MagiCodeChunk[]) || [];
 }
 
-export async function buildArtifactContextText(artifactId: string, maxChars = 32000): Promise<string | null> {
-	const artifact = await getArtifactById(artifactId);
-	if (!artifact || !artifact.manifest) return null;
-	const manifestSummary = artifact.manifest as Record<string, any>;
-	const manifestLines: string[] = [];
-	manifestLines.push(`Uploaded bundle: ${artifact.original_filename}`);
-	if (typeof manifestSummary.totalFiles === "number") {
-		manifestLines.push(
-			`Files processed: ${manifestSummary.processedFiles ?? manifestSummary.totalFiles} (skipped ${manifestSummary.skippedFiles ?? 0})`
-		);
-	}
-	if (manifestSummary.languages && typeof manifestSummary.languages === "object") {
-		const topLangs = Object.entries(manifestSummary.languages as Record<string, number>)
-			.sort((a, b) => b[1] - a[1])
-			.slice(0, 5)
-			.map(([lang, count]) => `${lang}(${count})`);
-		if (topLangs.length) {
-			manifestLines.push(`Languages: ${topLangs.join(", ")}`);
-		}
-	}
-	if (Array.isArray(manifestSummary.topFiles)) {
-		const topFiles = (manifestSummary.topFiles as Array<Record<string, any>>)
-			.slice(0, 5)
-			.map((f: any) => `${f.path} (${f.language || "text"})`)
-			.join("; ");
-		if (topFiles) manifestLines.push(`Key files: ${topFiles}`);
-	}
+export type ArtifactContextResult = {
+        text: string;
+        approxTokens: number;
+        chunkCount: number;
+        fileCount: number;
+        truncated: boolean;
+};
 
-	const priorityChunks = await listArtifactChunks(artifactId, 400, ["html", "php"]);
-	const generalChunks = await listArtifactChunks(artifactId, 200);
-	const seenChunkIds = new Set<number>();
-	const combinedChunks: MagiCodeChunk[] = [];
-	for (const chunk of priorityChunks) {
-		if (!chunk) continue;
-		seenChunkIds.add(chunk.id);
-		combinedChunks.push(chunk);
-	}
-	for (const chunk of generalChunks) {
-		if (!chunk || seenChunkIds.has(chunk.id)) continue;
-		seenChunkIds.add(chunk.id);
-		combinedChunks.push(chunk);
-	}
-	if (!combinedChunks.length) return manifestLines.join("\n");
-	const chunkLines: string[] = [];
-	let totalChars = manifestLines.join("\n").length;
-	for (const chunk of combinedChunks) {
-		const header = `File: ${chunk.file_path} [chunk ${chunk.chunk_index + 1}]`;
-		const body = chunk.content.trim();
-		const snippet = `${header}\n${body}`;
-		if (totalChars + snippet.length > maxChars) break;
-		chunkLines.push(snippet);
-		totalChars += snippet.length + 4;
-	}
-	return [manifestLines.join("\n"), chunkLines.join("\n\n")].filter(Boolean).join("\n\n");
+type ArtifactContextOptions = {
+        maxChars?: number;
+        question?: string;
+};
+
+export async function buildArtifactContextText(
+        artifactId: string,
+        options?: ArtifactContextOptions
+): Promise<ArtifactContextResult | null> {
+        const artifact = await getArtifactById(artifactId);
+        if (!artifact || !artifact.manifest) return null;
+        const manifestSummary = artifact.manifest as Record<string, any>;
+        const manifestLines = buildManifestSummaryLines(artifact, manifestSummary);
+        const manifestText = manifestLines.join("\n");
+        const maxChars = options?.maxChars ?? DEFAULT_CONTEXT_CHAR_BUDGET;
+
+        const priorityChunks = await listArtifactChunks(artifactId, 400, ["html", "php"]);
+        const generalChunks = await listArtifactChunks(artifactId, 200);
+        const seenChunkIds = new Set<number>();
+        const combinedChunks: ChunkLike[] = [];
+        for (const chunk of priorityChunks) {
+                if (!chunk) continue;
+                seenChunkIds.add(chunk.id);
+                combinedChunks.push(chunk);
+        }
+        for (const chunk of generalChunks) {
+                if (!chunk || seenChunkIds.has(chunk.id)) continue;
+                seenChunkIds.add(chunk.id);
+                combinedChunks.push(chunk);
+        }
+
+        if (!combinedChunks.length) {
+                return { text: manifestText, approxTokens: 0, chunkCount: 0, fileCount: 0, truncated: false };
+        }
+
+        const selection = selectChunksForContext(combinedChunks, manifestSummary, {
+                maxChars,
+                question: options?.question,
+                initialChars: manifestText.length,
+        });
+
+        const chunkSection = selection.snippets.join("\n\n");
+        const text = [manifestText, chunkSection].filter(Boolean).join("\n\n");
+        return {
+                text,
+                approxTokens: selection.approxTokens,
+                chunkCount: selection.chunkCount,
+                fileCount: selection.fileCount,
+                truncated: selection.truncated,
+        };
 }
 
 export async function processArtifactZip(artifact: MagiCodeArtifact) {
@@ -306,7 +471,8 @@ export async function processArtifactZip(artifact: MagiCodeArtifact) {
 	let skippedFiles = 0;
 	const languageCounts: Record<string, number> = {};
 	const fileSummaries: { path: string; language: string; bytes: number; chunks: number }[] = [];
-	const chunkRecords: Array<Omit<MagiCodeChunk, "id" | "created_at">> = [];
+const chunkRecords: Array<Omit<MagiCodeChunk, "id" | "created_at">> = [];
+let totalTokenEstimate = 0;
 
 	const priorityEntries: typeof zip.files = [];
 	const fallbackEntries: typeof zip.files = [];
@@ -371,30 +537,43 @@ export async function processArtifactZip(artifact: MagiCodeArtifact) {
 			chunks: limitedChunks.length,
 		});
 
-		limitedChunks.forEach((chunk, idx) => {
-			chunkRecords.push({
-				artifact_id: artifact.id,
-				file_path: cleanedPath,
-				chunk_index: idx,
-				language,
-				content: chunk,
-				token_estimate: estimateTokens(chunk),
-			});
-		});
-	}
+                limitedChunks.forEach((chunk, idx) => {
+                        const estimate = estimateTokens(chunk);
+                        chunkRecords.push({
+                                artifact_id: artifact.id,
+                                file_path: cleanedPath,
+                                chunk_index: idx,
+                                language,
+                                content: chunk,
+                                token_estimate: estimate,
+                        });
+                        totalTokenEstimate += estimate;
+                });
+        }
 
 	await deleteChunksForArtifact(artifact.id);
 	await insertChunks(chunkRecords);
 
-	const manifest = {
-		totalFiles: zip.files.length,
-		processedFiles,
-		skippedFiles,
-		languages: languageCounts,
-		topFiles: summarizeFiles(fileSummaries),
-		chunksStored: chunkRecords.length,
-		truncated: processedFiles >= MAX_TEXT_FILES || chunkRecords.length >= MAX_TOTAL_CHUNKS,
-	};
+        const manifest: Record<string, any> = {
+                totalFiles: zip.files.length,
+                processedFiles,
+                skippedFiles,
+                languages: languageCounts,
+                topFiles: summarizeFiles(fileSummaries),
+                chunksStored: chunkRecords.length,
+                truncated: processedFiles >= MAX_TEXT_FILES || chunkRecords.length >= MAX_TOTAL_CHUNKS,
+        };
+
+        const manifestLines = buildManifestSummaryLines(artifact, manifest);
+        const contextPreview = selectChunksForContext(chunkRecords, manifest, {
+                maxChars: DEFAULT_CONTEXT_CHAR_BUDGET,
+                initialChars: manifestLines.join("\n").length,
+        });
+        manifest.tokenSummary = {
+                stored: totalTokenEstimate,
+                approxContext: contextPreview.approxTokens,
+                chunks: chunkRecords.length,
+        };
 
 	await updateArtifact(artifact.id, {
 		status: "ready" as ArtifactStatus,

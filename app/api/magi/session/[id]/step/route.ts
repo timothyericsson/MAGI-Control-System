@@ -54,6 +54,11 @@ const HTTP_TOOL_DESCRIPTION =
 "Forward a cURL-style HTTP request via MAGI's relay so you can inspect live endpoints while auditing.";
 const MAX_HTTP_TOOL_CALLS = 5;
 
+const CONTEXT_CHAR_BUDGET = 26_000;
+const CONTEXT_ARTIFACT_SHARE = 0.65;
+const MIN_ARTIFACT_CHARS = 12_000;
+const MIN_LIVE_CHARS = 4_000;
+
 const HTTP_TOOL_PARAMETERS = {
 type: "object",
 properties: {
@@ -88,7 +93,52 @@ return Object.keys(result).length ? result : undefined;
 }
 
 function formatToolResultPayload(payload: unknown): string {
-return JSON.stringify(payload, null, 2);
+        return JSON.stringify(payload, null, 2);
+}
+
+function trimTextToLength(text: string | null, maxChars: number): { text: string | null; trimmed: boolean } {
+        if (!text || text.length <= maxChars) {
+                return { text, trimmed: false };
+        }
+        const sliced = `${text.slice(0, Math.max(0, maxChars - 1))}…`;
+        return { text: sliced, trimmed: true };
+}
+
+function rebalanceContextBudgets(artifact: string | null, live: string | null) {
+        const artifactLen = artifact?.length ?? 0;
+        const liveLen = live?.length ?? 0;
+        const total = artifactLen + liveLen;
+        let artifactTrimmed = false;
+        let liveTrimmed = false;
+        let artifactResult = artifact;
+        let liveResult = live;
+
+        if (artifactResult && liveResult && total > CONTEXT_CHAR_BUDGET) {
+                const artifactTarget = Math.max(
+                        MIN_ARTIFACT_CHARS,
+                        Math.round(CONTEXT_CHAR_BUDGET * CONTEXT_ARTIFACT_SHARE)
+                );
+                const liveTarget = Math.max(MIN_LIVE_CHARS, CONTEXT_CHAR_BUDGET - artifactTarget);
+                const artifactCut = trimTextToLength(artifactResult, artifactTarget);
+                const liveCut = trimTextToLength(liveResult, liveTarget);
+                artifactResult = artifactCut.text;
+                liveResult = liveCut.text;
+                artifactTrimmed = artifactCut.trimmed;
+                liveTrimmed = liveCut.trimmed;
+                return { artifact: artifactResult, live: liveResult, artifactTrimmed, liveTrimmed };
+        }
+
+        if (!liveResult && artifactResult && artifactLen > CONTEXT_CHAR_BUDGET) {
+                const artifactCut = trimTextToLength(artifactResult, CONTEXT_CHAR_BUDGET);
+                artifactResult = artifactCut.text;
+                artifactTrimmed = artifactCut.trimmed;
+        } else if (!artifactResult && liveResult && liveLen > CONTEXT_CHAR_BUDGET) {
+                const liveCut = trimTextToLength(liveResult, CONTEXT_CHAR_BUDGET);
+                liveResult = liveCut.text;
+                liveTrimmed = liveCut.trimmed;
+        }
+
+        return { artifact: artifactResult, live: liveResult, artifactTrimmed, liveTrimmed };
 }
 
 async function runHttpToolCall(rawArgs: any): Promise<string> {
@@ -596,17 +646,39 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
                 if (step === "propose") {
                         const stageEvents: string[] = [];
-                        const userQuestion = full.messages.find((m) => m.role === "user")?.content ?? "";
-                        const artifactContextPromise = full.session?.artifact_id
-                                ? buildArtifactContextText(full.session.artifact_id)
-                                : Promise.resolve(null);
-                        const liveUrlContextPromise = full.session?.live_url
-                                ? buildLiveUrlContext(full.session.live_url)
-                                : Promise.resolve(null);
-                        const [artifactContext, liveUrlContext] = await Promise.all([
-                                artifactContextPromise,
-                                liveUrlContextPromise,
-                        ]);
+const userQuestion = full.messages.find((m) => m.role === "user")?.content ?? "";
+const artifactContextPromise = full.session?.artifact_id
+? buildArtifactContextText(full.session.artifact_id, {
+question: userQuestion,
+maxChars: 24_000,
+})
+: Promise.resolve(null);
+const liveUrlContextPromise = full.session?.live_url
+? buildLiveUrlContext(full.session.live_url)
+: Promise.resolve(null);
+const [artifactContextResult, liveUrlContextRaw] = await Promise.all([
+artifactContextPromise,
+liveUrlContextPromise,
+]);
+let artifactContext = artifactContextResult?.text ?? null;
+let liveUrlContext = liveUrlContextRaw;
+if (artifactContextResult) {
+stageEvents.push(
+`Artifact context (~${artifactContextResult.approxTokens.toLocaleString()} tokens from ${artifactContextResult.fileCount} files)`
+);
+if (artifactContextResult.truncated) {
+stageEvents.push("Artifact context truncated to stay under prompt budget");
+}
+}
+const trimmedContext = rebalanceContextBudgets(artifactContext, liveUrlContext);
+artifactContext = trimmedContext.artifact;
+liveUrlContext = trimmedContext.live;
+if (trimmedContext.artifactTrimmed && artifactContext) {
+stageEvents.push(`Artifact context trimmed to ${artifactContext.length.toLocaleString()} chars`);
+}
+if (trimmedContext.liveTrimmed && liveUrlContext) {
+stageEvents.push(`Live snapshot trimmed to ${liveUrlContext.length.toLocaleString()} chars`);
+}
                         for (const a of agents) {
                                 let chatResult: AgentChatResult | null = null;
                                 try {
