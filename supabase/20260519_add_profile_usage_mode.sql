@@ -8,6 +8,12 @@ alter table if exists public.profiles
     add column if not exists stripe_checkout_session_id text;
 
 alter table if exists public.profiles
+    add column if not exists stripe_customer_id text;
+
+alter table if exists public.profiles
+    add column if not exists stripe_subscription_id text;
+
+alter table if exists public.profiles
     drop constraint if exists profiles_usage_mode_check;
 
 alter table if exists public.profiles
@@ -29,6 +35,41 @@ comment on column public.profiles.payment_status
 
 comment on column public.profiles.stripe_checkout_session_id
     is 'Most recent Stripe Checkout Session created for hosted MAGI access.';
+
+comment on column public.profiles.stripe_customer_id
+    is 'Stripe Customer ID for hosted MAGI access.';
+
+comment on column public.profiles.stripe_subscription_id
+    is 'Current Stripe Subscription ID for hosted MAGI access.';
+
+create table if not exists public.magi_subscriptions (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    stripe_customer_id text,
+    stripe_subscription_id text unique,
+    stripe_checkout_session_id text unique,
+    stripe_price_id text,
+    status text not null default 'checkout_started',
+    current_period_end timestamptz,
+    cancel_at_period_end boolean not null default false,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists magi_subscriptions_user_id_idx
+    on public.magi_subscriptions using btree (user_id);
+
+create index if not exists magi_subscriptions_customer_id_idx
+    on public.magi_subscriptions using btree (stripe_customer_id);
+
+alter table public.magi_subscriptions enable row level security;
+
+drop policy if exists "Users can view their own MAGI subscriptions" on public.magi_subscriptions;
+
+create policy "Users can view their own MAGI subscriptions"
+on public.magi_subscriptions
+for select
+using (auth.uid() = user_id);
 
 create or replace function public.handle_new_user_profile()
 returns trigger

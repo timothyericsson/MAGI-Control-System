@@ -17,6 +17,7 @@ NEXT_PUBLIC_SITE_URL=https://magi.bandors.org
 # Server-side only; do NOT expose to browser
 SUPABASE_SERVICE_ROLE_KEY=<your-service-role>
 STRIPE_SECRET_KEY=<your-stripe-secret-key>
+STRIPE_WEBHOOK_SECRET=<your-stripe-webhook-secret>
 STRIPE_PRICE_ID=<your-stripe-price-id>
 ```
 

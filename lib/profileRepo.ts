@@ -3,11 +3,13 @@ import type { AuthenticatedUser } from "@/lib/serverAuth";
 import type { MagiPaymentStatus, MagiProfile, MagiUsageMode } from "@/lib/magiTypes";
 
 export const PROFILE_SELECT =
-	"id, email, display_name, usage_mode, payment_status, stripe_checkout_session_id, created_at, updated_at";
+	"id, email, display_name, usage_mode, payment_status, stripe_customer_id, stripe_subscription_id, stripe_checkout_session_id, created_at, updated_at";
 
 export type ProfilePatch = {
 	usage_mode?: MagiUsageMode | null;
 	payment_status?: MagiPaymentStatus | null;
+	stripe_customer_id?: string | null;
+	stripe_subscription_id?: string | null;
 	stripe_checkout_session_id?: string | null;
 };
 

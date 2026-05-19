@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { apiErrorResponse, requireAuthenticatedUser } from "@/lib/serverAuth";
-import { updateProfile } from "@/lib/profileRepo";
+import { ensureProfile, updateProfile } from "@/lib/profileRepo";
 
 function getOrigin(req: NextRequest): string {
 	const configured = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
@@ -26,18 +26,24 @@ export async function POST(req: NextRequest) {
 			);
 		}
 
+		const profile = await ensureProfile(user);
 		const origin = getOrigin(req);
 		const params = new URLSearchParams({
-			mode: "payment",
+			mode: "subscription",
 			"line_items[0][price]": priceId,
 			"line_items[0][quantity]": "1",
 			success_url: `${origin}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
 			cancel_url: `${origin}/?checkout=cancelled`,
 			client_reference_id: user.id,
+			submit_type: "subscribe",
 			"metadata[user_id]": user.id,
 			"metadata[usage_mode]": "paid",
+			"subscription_data[metadata][user_id]": user.id,
+			"subscription_data[metadata][usage_mode]": "paid",
 		});
-		if (user.email) {
+		if (profile.stripe_customer_id) {
+			params.set("customer", profile.stripe_customer_id);
+		} else if (user.email) {
 			params.set("customer_email", user.email);
 		}
 

@@ -11,6 +11,8 @@ export interface MagiProfile {
 	display_name: string | null;
 	usage_mode: MagiUsageMode | null;
 	payment_status: MagiPaymentStatus | null;
+	stripe_customer_id: string | null;
+	stripe_subscription_id: string | null;
 	stripe_checkout_session_id: string | null;
 	created_at: string;
 	updated_at: string;
