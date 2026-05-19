@@ -9,6 +9,7 @@ import type {
         MagiAgent,
         MagiConsensus,
         MagiMessage,
+        MagiProfile,
         MagiSession,
         MagiStepDiagnostics,
         MagiVote,
@@ -89,6 +90,14 @@ type ArtifactApiResponse = {
         updated_at: string;
 };
 
+type HostedDailyUsage = {
+        applies: boolean;
+        limit: number;
+        used: number;
+        remaining: number;
+        resetAt: string;
+};
+
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const MAX_UPLOAD_MB = Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024));
 
@@ -108,6 +117,8 @@ export default function MagiConsensusControl() {
         const [uploadingArtifact, setUploadingArtifact] = useState(false);
         const [liveUrl, setLiveUrl] = useState("");
         const [liveUrlError, setLiveUrlError] = useState<string | null>(null);
+        const [profile, setProfile] = useState<MagiProfile | null>(null);
+        const [hostedUsage, setHostedUsage] = useState<HostedDailyUsage | null>(null);
         const fileInputRef = useRef<HTMLInputElement | null>(null);
         // Local display buffers to avoid UI depending on DB read latency
         const [displayProposals, setDisplayProposals] = useState<MagiMessage[]>([]);
@@ -141,6 +152,43 @@ export default function MagiConsensusControl() {
         const getAuth = useCallback(async () => {
                 return getClientAuthContext();
         }, []);
+
+        const loadAccountState = useCallback(async () => {
+                const auth = await getAuth();
+                const [profileRes, usageRes] = await Promise.all([
+                        fetch("/api/profile", { cache: "no-store", headers: auth.headers }),
+                        fetch("/api/usage", { cache: "no-store", headers: auth.headers }),
+                ]);
+                const [profileJson, usageJson] = await Promise.all([profileRes.json(), usageRes.json()]);
+                if (profileRes.ok && profileJson?.ok) {
+                        setProfile(profileJson.profile as MagiProfile);
+                }
+                if (usageRes.ok && usageJson?.ok) {
+                        setHostedUsage(usageJson.usage as HostedDailyUsage);
+                }
+        }, [getAuth]);
+
+        useEffect(() => {
+                loadAccountState().catch(() => {
+                        setProfile(null);
+                        setHostedUsage(null);
+                });
+        }, [loadAccountState]);
+
+        useEffect(() => {
+                if (typeof window === "undefined") return;
+                const handler = (event: Event) => {
+                        const profileUpdate = (event as CustomEvent<{ profile?: MagiProfile }>).detail?.profile;
+                        if (profileUpdate) {
+                                setProfile(profileUpdate);
+                                loadAccountState().catch(() => undefined);
+                        }
+                };
+                window.addEventListener("magi-profile-updated", handler as EventListener);
+                return () => {
+                        window.removeEventListener("magi-profile-updated", handler as EventListener);
+                };
+        }, [loadAccountState]);
 
         const updateDisplayVotes = useCallback((incoming: MagiVote[] | null | undefined) => {
                 const normalized = normalizeVoteScores(incoming);
@@ -400,6 +448,8 @@ export default function MagiConsensusControl() {
                 }
         }, [getAuth, loadSessions]);
 
+        const hostedPaid = profile?.usage_mode === "paid" && profile.payment_status === "paid";
+        const hostedLimitReached = Boolean(hostedPaid && hostedUsage && hostedUsage.remaining <= 0);
 
         const getKeys = useCallback(() => {
                 return {
@@ -636,7 +686,7 @@ export default function MagiConsensusControl() {
 	}
 
         const runStep = useCallback(async (sessionId: string, s: "propose" | "vote" | "consensus") => {
-                const keys = getKeys();
+                const keys = hostedPaid ? {} : getKeys();
                 const auth = await getAuth();
                 const res = await fetch(`/api/magi/session/${sessionId}/step`, {
                         method: "POST",
@@ -676,7 +726,7 @@ export default function MagiConsensusControl() {
                 // And a brief delayed refresh to avoid any replication lag
                 setTimeout(() => fetchFull(sessionId), 150);
                 return data;
-        }, [fetchFull, formatDiagnosticSummary, getAuth, getKeys]);
+        }, [fetchFull, formatDiagnosticSummary, getAuth, getKeys, hostedPaid]);
 
         const onRun = useCallback(async () => {
                 setError(null);
@@ -694,7 +744,11 @@ export default function MagiConsensusControl() {
                         setError("Auth not initialized");
                         return;
                 }
-                if (!verifiedAll) {
+                if (hostedLimitReached) {
+                        setError(`Daily hosted MAGI limit reached. You get ${hostedUsage?.limit ?? 10} runs per day.`);
+                        return;
+                }
+                if (!hostedPaid && !verifiedAll) {
                         setError("All three providers must be linked first.");
                         return;
                 }
@@ -730,6 +784,9 @@ export default function MagiConsensusControl() {
                         const created = await createRes.json();
                         if (!created.ok) {
                                 throw new Error(created.error || "Failed to create session");
+                        }
+                        if (created.usage) {
+                                setHostedUsage(created.usage as HostedDailyUsage);
                         }
                         const sessionId: string = created.sessionId;
                         const nowIso = new Date().toISOString();
@@ -830,6 +887,9 @@ export default function MagiConsensusControl() {
                 question,
                 runStep,
                 showHistory,
+                hostedLimitReached,
+                hostedPaid,
+                hostedUsage?.limit,
                 verifiedAll,
         ]);
 
@@ -979,12 +1039,19 @@ return parts.join(" • ");
                 return votes.slice().sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
         }, [votes]);
 
+        const runBusy = step !== "idle" && step !== "done" && step !== "error";
+        const runDisabled = runBusy || hostedLimitReached;
+        const hostedUsageLabel =
+                hostedPaid && hostedUsage
+                        ? `${hostedUsage.used}/${hostedUsage.limit} hosted runs used today`
+                        : null;
+
 	return (
 		<section className="mt-8">
 			<header className="mb-3">
 				<h2 className="title-text text-lg font-bold text-white/90">MAGI Consensus</h2>
 				<p className="ui-text text-white/60 text-sm">
-					Ask a nuanced question. Three models compare answers to reduce hallucinations.
+					Ask anything. MAGI checks multiple AI perspectives and gives you a clearer answer.
 				</p>
 			</header>
                         <div className="magi-panel border-white/15 p-4 relative">
@@ -1113,7 +1180,7 @@ Token budget: {artifactTokenSummary}
                                 <div className="mt-3 flex flex-wrap items-center gap-3">
                                         <button
                                                 onClick={onRun}
-                                                disabled={step !== "idle" && step !== "done" && step !== "error"}
+                                                disabled={runDisabled}
                                                 className="px-4 py-1.5 rounded-md border border-white/20 bg-white/10 hover:bg-white/15 ui-text text-sm disabled:opacity-60"
                                         >
                                                 {step === "creating"
@@ -1131,7 +1198,15 @@ Token budget: {artifactTokenSummary}
                                         <span className="ui-text text-xs text-white/50">
                                                 {displayProposals.length || proposals.length} draft answers tracked
                                         </span>
-                                        {!verifiedAll && <span className="ui-text text-xs text-red-400">Link all three providers first</span>}
+                                        {hostedUsageLabel && (
+                                                <span className={clsx("ui-text text-xs", hostedLimitReached ? "text-red-400" : "text-magiGreen")}>
+                                                        {hostedUsageLabel}
+                                                </span>
+                                        )}
+                                        {!hostedPaid && !verifiedAll && <span className="ui-text text-xs text-red-400">Link all three providers first</span>}
+                                        {hostedLimitReached && (
+                                                <span className="ui-text text-xs text-red-400">Daily hosted limit reached</span>
+                                        )}
                                         {error && <span className="ui-text text-xs text-red-400">{error}</span>}
                                 </div>
                         </div>

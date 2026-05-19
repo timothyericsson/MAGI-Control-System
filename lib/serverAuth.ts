@@ -56,6 +56,12 @@ export function apiErrorResponse(error: unknown): Response {
 	if (error instanceof AuthError) {
 		return new Response(JSON.stringify({ ok: false, error: error.message }), { status: error.status });
 	}
+	if (error && typeof error === "object" && "status" in error && typeof (error as { status: unknown }).status === "number") {
+		const message = error instanceof Error ? error.message : "Unexpected error";
+		return new Response(JSON.stringify({ ok: false, error: message }), {
+			status: (error as { status: number }).status,
+		});
+	}
 	const message = error instanceof Error ? error.message : "Unexpected error";
 	return new Response(JSON.stringify({ ok: false, error: message }), { status: 500 });
 }

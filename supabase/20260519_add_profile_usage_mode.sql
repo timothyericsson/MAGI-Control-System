@@ -71,6 +71,26 @@ on public.magi_subscriptions
 for select
 using (auth.uid() = user_id);
 
+create table if not exists public.magi_usage_events (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    session_id uuid references public.magi_sessions(id) on delete set null,
+    event_type text not null default 'hosted_run',
+    created_at timestamptz not null default now()
+);
+
+create index if not exists magi_usage_events_user_created_idx
+    on public.magi_usage_events using btree (user_id, created_at desc);
+
+alter table public.magi_usage_events enable row level security;
+
+drop policy if exists "Users can view their own MAGI usage events" on public.magi_usage_events;
+
+create policy "Users can view their own MAGI usage events"
+on public.magi_usage_events
+for select
+using (auth.uid() = user_id);
+
 create or replace function public.handle_new_user_profile()
 returns trigger
 language plpgsql

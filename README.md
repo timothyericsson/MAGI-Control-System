@@ -19,6 +19,9 @@ SUPABASE_SERVICE_ROLE_KEY=<your-service-role>
 STRIPE_SECRET_KEY=<your-stripe-secret-key>
 STRIPE_WEBHOOK_SECRET=<your-stripe-webhook-secret>
 STRIPE_PRICE_ID=<your-stripe-price-id>
+OPENAI_API_KEY=<hosted-plan-openai-key>
+ANTHROPIC_API_KEY=<hosted-plan-anthropic-key>
+XAI_API_KEY=<hosted-plan-xai-key>
 ```
 
 3) Run the dev server:

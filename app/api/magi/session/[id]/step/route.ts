@@ -13,7 +13,9 @@ import { canonicalModelFor } from "@/lib/magiModels";
 import { buildArtifactContextText } from "@/lib/codeArtifacts";
 import { buildLiveUrlContext } from "@/lib/liveSiteContext";
 import { performLiveHttpRequest } from "@/lib/liveHttpProxy";
-import { apiErrorResponse, requireAuthenticatedUserId } from "@/lib/serverAuth";
+import { apiErrorResponse, requireAuthenticatedUser } from "@/lib/serverAuth";
+import { ensureProfile } from "@/lib/profileRepo";
+import { assertHostedProviderKeys, getHostedProviderKeys, isHostedPaidProfile } from "@/lib/hostedKeys";
 import type {
         MagiAgent,
         MagiMessage,
@@ -662,8 +664,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 		const body = (await req.json()) as StepRequestBody;
 		const { id: sessionId } = await params;
 		const { step } = body;
-		const keys = (body?.keys || {}) as ProviderKeyMap;
-		const userId = await requireAuthenticatedUserId(req);
+		const browserKeys = (body?.keys || {}) as ProviderKeyMap;
+		const user = await requireAuthenticatedUser(req);
+		const userId = user.id;
+		const profile = await ensureProfile(user);
+		const hostedPaid = isHostedPaidProfile(profile);
+		const keys = hostedPaid ? getHostedProviderKeys() : browserKeys;
+		if (hostedPaid) {
+			assertHostedProviderKeys(keys);
+		}
 
 		if (!["propose", "vote", "consensus"].includes(step)) {
 			return new Response(JSON.stringify({ ok: false, error: "Invalid step" }), { status: 400 });
