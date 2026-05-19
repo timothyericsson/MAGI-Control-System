@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseClient";
+import { getClientAuthContext } from "@/lib/clientAuth";
+import { startStripeCheckout } from "@/lib/clientBilling";
+import type { MagiPaymentStatus, MagiProfile, MagiUsageMode } from "@/lib/magiTypes";
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
 	const [checking, setChecking] = useState(true);
@@ -13,6 +16,14 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
 	const [submitting, setSubmitting] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [profileLoading, setProfileLoading] = useState(false);
+	const [profileLoaded, setProfileLoaded] = useState(false);
+	const [usageMode, setUsageMode] = useState<MagiUsageMode | null>(null);
+	const [paymentStatus, setPaymentStatus] = useState<MagiPaymentStatus | null>(null);
+	const [usageModeSaving, setUsageModeSaving] = useState<MagiUsageMode | null>(null);
+	const [pendingPaidChoice, setPendingPaidChoice] = useState(false);
+	const [checkoutLoading, setCheckoutLoading] = useState(false);
+	const [onboardingError, setOnboardingError] = useState<string | null>(null);
 
 	const lockedProps = useMemo(
 		() => (!allowed ? { inert: true, "aria-hidden": true } : {}),
@@ -48,6 +59,58 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
 			sub.subscription.unsubscribe();
 		};
 	}, []);
+
+	useEffect(() => {
+		let mounted = true;
+		async function loadProfile() {
+			if (!allowed) {
+				setProfileLoading(false);
+				setProfileLoaded(false);
+				setUsageMode(null);
+				setPaymentStatus(null);
+				setPendingPaidChoice(false);
+				setOnboardingError(null);
+				return;
+			}
+			setProfileLoading(true);
+			setOnboardingError(null);
+			try {
+				const auth = await getClientAuthContext();
+				const res = await fetch("/api/profile", {
+					cache: "no-store",
+					headers: auth.headers,
+				});
+				const json = await res.json();
+				if (!res.ok || !json?.ok) {
+					throw new Error(json?.error || "Unable to load account profile.");
+				}
+				if (!mounted) return;
+				setUsageMode(json.profile?.usage_mode ?? null);
+				setPaymentStatus(json.profile?.payment_status ?? null);
+				setPendingPaidChoice(false);
+				setProfileLoaded(true);
+			} catch (err: any) {
+				if (!mounted) return;
+				setOnboardingError(err?.message || "Unable to load account profile.");
+				setProfileLoaded(true);
+			} finally {
+				if (mounted) setProfileLoading(false);
+			}
+		}
+		loadProfile();
+		return () => {
+			mounted = false;
+		};
+	}, [allowed]);
+
+	function applyProfile(profile: MagiProfile) {
+		setUsageMode(profile.usage_mode);
+		setPaymentStatus(profile.payment_status);
+		setPendingPaidChoice(false);
+		if (typeof window !== "undefined") {
+			window.dispatchEvent(new CustomEvent("magi-profile-updated", { detail: { profile } }));
+		}
+	}
 
 	function resetFeedback(nextMode?: "login" | "register") {
 		setError(null);
@@ -106,6 +169,72 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
 		}
 	}
 
+	async function selectUsageMode(nextUsageMode: MagiUsageMode) {
+		if (nextUsageMode === "paid") {
+			setUsageMode("paid");
+			setPaymentStatus(null);
+			setPendingPaidChoice(true);
+			setOnboardingError(null);
+			return;
+		}
+		setUsageModeSaving(nextUsageMode);
+		setOnboardingError(null);
+		try {
+			const auth = await getClientAuthContext();
+			const res = await fetch("/api/profile", {
+				method: "PATCH",
+				headers: { ...auth.headers, "Content-Type": "application/json" },
+				body: JSON.stringify({ usageMode: nextUsageMode }),
+			});
+			const json = await res.json();
+			if (!res.ok || !json?.ok) {
+				throw new Error(json?.error || "Unable to save account choice.");
+			}
+			applyProfile(json.profile);
+		} catch (err: any) {
+			setOnboardingError(err?.message || "Unable to save account choice.");
+		} finally {
+			setUsageModeSaving(null);
+		}
+	}
+
+	async function selectPayLater() {
+		setUsageModeSaving("paid");
+		setOnboardingError(null);
+		try {
+			const auth = await getClientAuthContext();
+			const res = await fetch("/api/profile", {
+				method: "PATCH",
+				headers: { ...auth.headers, "Content-Type": "application/json" },
+				body: JSON.stringify({ usageMode: "paid", paymentStatus: "pay_later" }),
+			});
+			const json = await res.json();
+			if (!res.ok || !json?.ok) {
+				throw new Error(json?.error || "Unable to save account choice.");
+			}
+			applyProfile(json.profile);
+		} catch (err: any) {
+			setOnboardingError(err?.message || "Unable to save account choice.");
+		} finally {
+			setUsageModeSaving(null);
+		}
+	}
+
+	async function selectPayNow() {
+		setCheckoutLoading(true);
+		setOnboardingError(null);
+		try {
+			await startStripeCheckout();
+		} catch (err: any) {
+			setOnboardingError(err?.message || "Unable to start checkout.");
+			setCheckoutLoading(false);
+		}
+	}
+
+	const needsInitialChoice = profileLoaded && !usageMode && !pendingPaidChoice;
+	const needsBillingChoice = profileLoaded && (pendingPaidChoice || (usageMode === "paid" && !paymentStatus));
+	const showOnboarding = allowed && (profileLoading || onboardingError || needsInitialChoice || needsBillingChoice);
+
 	return (
 		<>
 			<div
@@ -126,7 +255,7 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
 						<header className="mb-5">
 							<div className="flex items-center justify-between gap-2">
 								<h1 className="title-text auth-title text-xl md:text-2xl font-bold">
-									{mode === "login" ? "RESEARCH ACCESS" : "RESEARCHER ENROLLMENT"}
+									{mode === "login" ? "MAGI ACCESS" : "ACCOUNT REGISTRATION"}
 								</h1>
 							</div>
 							<div className="auth-divider mt-3" />
@@ -204,12 +333,76 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
 										: "Registering..."
 									: mode === "login"
 										? "Enter MAGI"
-										: "Create Research Account"}
+										: "Create Account"}
 							</button>
 							{checking && <p className="text-sm text-white/60">Verifying access...</p>}
 							{error && <p className="text-sm text-red-400">{error}</p>}
 							{message && <p className="text-sm text-magiGreen">{message}</p>}
 						</form>
+					</div>
+				</div>
+			)}
+
+			{showOnboarding && (
+				<div className="fixed inset-0 z-[110] flex items-center justify-center px-4 py-8">
+					<div className="absolute inset-0 bg-black/55 backdrop-blur-[2px]" />
+					<div className="relative w-full max-w-md magi-panel border-white/20 p-5 md:p-6 auth-panel-enter shadow-magi-glow-blue">
+						<header className="mb-5">
+							<h1
+								className={
+									needsBillingChoice
+										? "title-text text-lg md:text-xl font-bold"
+										: "title-text auth-title text-xl md:text-2xl font-bold"
+								}
+							>
+								{needsBillingChoice ? "Do you want to pay now, or later" : "Choose how to use Magi"}
+							</h1>
+							<div className="auth-divider mt-3" />
+						</header>
+
+						{profileLoading ? (
+							<p className="ui-text text-sm text-white/60">Preparing account...</p>
+						) : needsBillingChoice ? (
+							<div className="grid gap-3 ui-text">
+								<button
+									type="button"
+									onClick={selectPayNow}
+									disabled={checkoutLoading || Boolean(usageModeSaving)}
+									className="w-full rounded-md border border-magiOrange/60 bg-magiOrange/15 px-4 py-3 text-sm text-white transition hover:bg-magiOrange/25 disabled:opacity-60"
+								>
+									{checkoutLoading ? "Opening Stripe..." : "Pay now"}
+								</button>
+								<button
+									type="button"
+									onClick={selectPayLater}
+									disabled={checkoutLoading || Boolean(usageModeSaving)}
+									className="w-full rounded-md border border-white/20 bg-white/10 px-4 py-3 text-sm text-white transition hover:bg-white/15 disabled:opacity-60"
+								>
+									{usageModeSaving === "paid" ? "Saving..." : "Pay later"}
+								</button>
+								{onboardingError && <p className="text-sm text-red-400">{onboardingError}</p>}
+							</div>
+						) : (
+							<div className="grid gap-3 ui-text">
+								<button
+									type="button"
+									onClick={() => selectUsageMode("bring_keys")}
+									disabled={Boolean(usageModeSaving)}
+									className="w-full rounded-md border border-magiBlue/60 bg-magiBlue/15 px-4 py-3 text-sm text-white transition hover:bg-magiBlue/25 disabled:opacity-60"
+								>
+									{usageModeSaving === "bring_keys" ? "Saving..." : "Bring my own keys (free)"}
+								</button>
+								<button
+									type="button"
+									onClick={() => selectUsageMode("paid")}
+									disabled={Boolean(usageModeSaving)}
+									className="w-full rounded-md border border-magiOrange/60 bg-magiOrange/15 px-4 py-3 text-sm text-white transition hover:bg-magiOrange/25 disabled:opacity-60"
+								>
+									{usageModeSaving === "paid" ? "Saving..." : "I'll just pay $5"}
+								</button>
+								{onboardingError && <p className="text-sm text-red-400">{onboardingError}</p>}
+							</div>
+						)}
 					</div>
 				</div>
 			)}

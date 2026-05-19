@@ -718,7 +718,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                                 let chatResult: AgentChatResult | null = null;
                                 try {
 const systemPrompts = [
-`You are ${a.name}. Answer the research question carefully. Prioritize factual accuracy, explicit uncertainty, source-grounded claims, and alternative interpretations. Keep it under 220 words.`,
+`You are ${a.name}. Answer the user's question carefully. Prioritize factual accuracy, explicit uncertainty, source-grounded claims, and alternative interpretations. Keep it under 220 words.`,
 ];
                                         if (artifactContext) {
                                                 systemPrompts.push(

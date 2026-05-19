@@ -171,7 +171,7 @@ export default function MagiTriad() {
 				>
 					{bootStage >= 1 && (
 						<div className="title-text text-white/70 tracking-[0.35em] text-xs md:text-sm mb-2 boot-flicker">
-							RESEARCH TRIAD
+							MAGI TRIAD
 						</div>
 					)}
 					{bootStage >= 2 && (
@@ -187,4 +187,3 @@ export default function MagiTriad() {
 		</section>
 	);
 }
-

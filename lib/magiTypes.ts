@@ -2,6 +2,20 @@ export type MagiSessionStatus = "pending" | "running" | "consensus" | "complete"
 
 export type MagiMessageKind = "user" | "agent_proposal" | "agent_critique" | "system" | "consensus";
 
+export type MagiUsageMode = "bring_keys" | "paid";
+export type MagiPaymentStatus = "not_required" | "pay_later" | "checkout_started" | "paid";
+
+export interface MagiProfile {
+	id: string;
+	email: string | null;
+	display_name: string | null;
+	usage_mode: MagiUsageMode | null;
+	payment_status: MagiPaymentStatus | null;
+	stripe_checkout_session_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
 export interface MagiAgent {
 	id: string;
 	slug: "casper" | "balthasar" | "melchior";
@@ -120,4 +134,3 @@ export interface MagiStepDiagnostics {
 	winningScore?: number | null;
 	consensusMessageId?: number | null;
 }
-

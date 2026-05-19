@@ -18,8 +18,8 @@ const rajdhani = Rajdhani({
 });
 
 export const metadata: Metadata = {
-	title: "MAGI Research Console",
-	description: "Tri-core research console designed to reduce hallucinations in nuanced AI answers",
+	title: "MAGI Control System",
+	description: "Tri-core MAGI console designed to reduce hallucinations in nuanced AI answers",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -52,4 +52,3 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 		</html>
 	);
 }
-

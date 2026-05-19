@@ -28,7 +28,7 @@ export async function buildLiveUrlContext(liveUrl: string, maxChars = MAX_CONTEX
                         method: "GET",
                         signal: controller.signal,
                         headers: {
-                                "User-Agent": "MAGI/1.0 (+research assistant)",
+                                "User-Agent": "MAGI/1.0 (+assistant)",
                                 Accept: "text/html, text/plain;q=0.9, */*;q=0.1",
                         },
                 });

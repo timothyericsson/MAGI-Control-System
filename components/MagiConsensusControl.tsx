@@ -187,7 +187,7 @@ export default function MagiConsensusControl() {
                         while (Date.now() - start < timeoutMs) {
                                 const payload = await refreshArtifactStatus(artifactId);
                                 if (payload.status === "ready") {
-                                        setArtifactStatusMessage("Source bundle ready for research.");
+                                        setArtifactStatusMessage("Source bundle ready.");
                                         return payload;
                                 }
                                 if (payload.status === "failed") {
@@ -260,7 +260,7 @@ export default function MagiConsensusControl() {
                                 await waitForArtifactReady(artifactId);
                                 if (!question.trim()) {
                                         setQuestion(
-                                                `Use ${file.name} as source material to answer a nuanced research question. Identify what the evidence supports, what remains uncertain, and what would verify the answer.`
+                                                `Use ${file.name} as source material to answer a nuanced question. Identify what the evidence supports, what remains uncertain, and what would verify the answer.`
                                         );
                                 }
                         } catch (err: any) {
@@ -311,7 +311,7 @@ export default function MagiConsensusControl() {
         useEffect(() => {
                 if (!question.trim() && normalizedLiveUrl) {
                         setQuestion(
-                                `Use ${normalizedLiveUrl} as source material to answer a nuanced research question. Separate observed facts, likely interpretations, and open uncertainties.`
+                                `Use ${normalizedLiveUrl} as source material to answer a nuanced question. Separate observed facts, likely interpretations, and open uncertainties.`
                         );
                 }
         }, [normalizedLiveUrl, question]);
@@ -982,9 +982,9 @@ return parts.join(" • ");
 	return (
 		<section className="mt-8">
 			<header className="mb-3">
-				<h2 className="title-text text-lg font-bold text-white/90">Research Consensus</h2>
+				<h2 className="title-text text-lg font-bold text-white/90">MAGI Consensus</h2>
 				<p className="ui-text text-white/60 text-sm">
-					Ask a nuanced research question. Three models compare answers to reduce hallucinations.
+					Ask a nuanced question. Three models compare answers to reduce hallucinations.
 				</p>
 			</header>
                         <div className="magi-panel border-white/15 p-4 relative">
@@ -1102,7 +1102,7 @@ Token budget: {artifactTokenSummary}
                                                 </p>
                                         )}
                                 </div>
-                                <label className="ui-text text-sm text-white/70 block mb-2">Research question</label>
+                                <label className="ui-text text-sm text-white/70 block mb-2">Question</label>
                                 <textarea
                                         value={question}
                                         onChange={(e) => setQuestion(e.target.value)}
@@ -1217,7 +1217,7 @@ Token budget: {artifactTokenSummary}
                                                                                 {new Date(historyDetail.createdAt).toLocaleString()}
                                                                         </div>
                                                                         <div className="bg-black border border-white/10 rounded p-3">
-                                                                                <div className="title-text text-sm font-semibold text-white/80">Research Question</div>
+                                                                                <div className="title-text text-sm font-semibold text-white/80">Question</div>
                                                                                 <div className="ui-text text-sm text-white/80 whitespace-pre-wrap mt-2">
                                                                                         {historyDetail.question || "—"}
                                                                                 </div>

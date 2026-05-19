@@ -1,5 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 
+export type AuthenticatedUser = {
+	id: string;
+	email: string | null;
+};
+
 export class AuthError extends Error {
 	status = 401;
 
@@ -19,13 +24,18 @@ function getBearerToken(req: Request): string {
 }
 
 export async function requireAuthenticatedUserId(req: Request): Promise<string> {
+	const user = await requireAuthenticatedUser(req);
+	return user.id;
+}
+
+export async function requireAuthenticatedUser(req: Request): Promise<AuthenticatedUser> {
+	const token = getBearerToken(req);
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 	const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 	if (!url || !anonKey) {
 		throw new Error("Supabase auth credentials are not configured");
 	}
 
-	const token = getBearerToken(req);
 	const supabase = createClient(url, anonKey, {
 		auth: {
 			autoRefreshToken: false,
@@ -36,7 +46,10 @@ export async function requireAuthenticatedUserId(req: Request): Promise<string> 
 	if (error || !data.user?.id) {
 		throw new AuthError("Invalid authorization token");
 	}
-	return data.user.id;
+	return {
+		id: data.user.id,
+		email: data.user.email ?? null,
+	};
 }
 
 export function apiErrorResponse(error: unknown): Response {
